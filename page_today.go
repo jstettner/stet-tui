@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
 	"strings"
@@ -29,6 +30,58 @@ func (t Task) Description() string { return t.description }
 
 func (t *Task) ToggleCompleted() {
 	t.completed = !t.completed
+}
+
+/**
+ * Task completion persistence messages
+ */
+
+// taskCompletionSavedMsg indicates the DB write succeeded.
+type taskCompletionSavedMsg struct {
+	taskID    string
+	completed bool
+}
+
+// taskCompletionSaveFailedMsg indicates the DB write failed.
+type taskCompletionSaveFailedMsg struct {
+	taskID    string
+	completed bool
+	err       error
+}
+
+// saveTaskCompletionCmd persists the task completion state to the database.
+// If completed is true, inserts a row into task_history for today.
+// If completed is false, deletes the row for today.
+func saveTaskCompletionCmd(db *sql.DB, taskID string, completed bool) tea.Cmd {
+	return func() tea.Msg {
+		var err error
+		if completed {
+			// Insert completion for today (ignore if already exists)
+			_, err = db.Exec(`
+				INSERT INTO task_history (id, task_id, completed_date)
+				VALUES (lower(hex(randomblob(16))), ?, date('now', 'localtime'))
+				ON CONFLICT(task_id, completed_date) DO NOTHING
+			`, taskID)
+		} else {
+			// Remove completion for today
+			_, err = db.Exec(`
+				DELETE FROM task_history
+				WHERE task_id = ? AND completed_date = date('now', 'localtime')
+			`, taskID)
+		}
+
+		if err != nil {
+			return taskCompletionSaveFailedMsg{
+				taskID:    taskID,
+				completed: completed,
+				err:       err,
+			}
+		}
+		return taskCompletionSavedMsg{
+			taskID:    taskID,
+			completed: completed,
+		}
+	}
 }
 
 // Initial tasks for demonstration.
@@ -150,16 +203,18 @@ func newTaskDelegate() *taskDelegate {
 // TodayPage displays today's tasks.
 type TodayPage struct {
 	tasks list.Model
+	db    *sql.DB
 }
 
 // NewTodayPage creates and initializes the Today page.
-func NewTodayPage() *TodayPage {
+func NewTodayPage(db *sql.DB) *TodayPage {
 	delegate := newTaskDelegate()
 	tasks := list.New(tasksInitial, delegate, 0, docStyle.GetHeight())
 	tasks.Title = "Hit List"
 
 	return &TodayPage{
 		tasks: tasks,
+		db:    db,
 	}
 }
 
@@ -181,11 +236,46 @@ func (p *TodayPage) SetSize(width, height int) {
 }
 
 func (p *TodayPage) Update(msg tea.Msg) (Page, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	// First, let the list handle the message
 	var listCmd tea.Cmd
 	p.tasks, listCmd = p.tasks.Update(msg)
-	cmd := listCmd
+	if listCmd != nil {
+		cmds = append(cmds, listCmd)
+	}
 
 	switch msg := msg.(type) {
+	case taskCompletionSavedMsg:
+		// Show status message
+		statusMsg := "marked incomplete"
+		if msg.completed {
+			statusMsg = "marked completed"
+		}
+		cmds = append(cmds, p.tasks.NewStatusMessage(statusMsg))
+
+		// DB write succeeded - nothing to do, UI already updated optimistically
+
+	case taskCompletionSaveFailedMsg:
+		cmds = append(cmds, p.tasks.NewStatusMessage(fmt.Sprintf("save failed: %v", msg.err)))
+		// DB write failed - revert the UI state and show error
+		for i, listItem := range p.tasks.Items() {
+			task, ok := listItem.(Task)
+			if !ok {
+				continue
+			}
+			if task.id == msg.taskID {
+				// Revert: toggle back to the opposite of what we tried to save
+				task.completed = !msg.completed
+				setCmd := p.tasks.SetItem(i, task)
+				if setCmd != nil {
+					cmds = append(cmds, setCmd)
+				}
+				break
+			}
+		}
+		cmds = append(cmds, p.tasks.NewStatusMessage(fmt.Sprintf("save failed: %v", msg.err)))
+
 	case tea.KeyMsg:
 		// Be robust: depending on terminal/platform, space can come through as
 		// KeySpace or KeyRunes with a single ' ' rune.
@@ -200,7 +290,7 @@ func (p *TodayPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 			break
 		}
 
-		// Use GlobalIndex() because SetItem expects indices in the unfiltered list.
+		// Toggle task completion synchronously in Update
 		selectedIdx := p.tasks.GlobalIndex()
 		if selectedIdx < 0 || selectedIdx >= len(p.tasks.Items()) {
 			break
@@ -211,15 +301,20 @@ func (p *TodayPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 			break
 		}
 
+		// Toggle state (optimistic UI update)
 		item.ToggleCompleted()
 
-		// Important: SetItem can return a command to recompute filtering.
+		// Update list synchronously - SetItem returns a cmd for filtering
 		setCmd := p.tasks.SetItem(selectedIdx, item)
-		// Add a status message so it's obvious the keypress is being handled.
-		statusCmd := p.tasks.NewStatusMessage("marked completed")
-		cmd = tea.Batch(cmd, setCmd, statusCmd)
+		if setCmd != nil {
+			cmds = append(cmds, setCmd)
+		}
+
+		// Persist to DB asynchronously
+		cmds = append(cmds, saveTaskCompletionCmd(p.db, item.id, item.completed))
 	}
-	return p, cmd
+
+	return p, tea.Batch(cmds...)
 }
 
 func (p *TodayPage) View() string {

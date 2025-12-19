@@ -56,7 +56,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	p := tea.NewProgram(NewAppModel())
+	p := tea.NewProgram(NewAppModel(db))
 	if _, err := p.Run(); err != nil {
 		fmt.Println("Error running program:", err)
 		os.Exit(1)

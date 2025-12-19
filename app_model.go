@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/paginator"
@@ -17,9 +18,9 @@ type AppModel struct {
 }
 
 // NewAppModel creates and initializes the application model with all pages.
-func NewAppModel() AppModel {
+func NewAppModel(db *sql.DB) AppModel {
 	pages := []Page{
-		NewTodayPage(),
+		NewTodayPage(db),
 		NewHistoryPage(),
 	}
 
