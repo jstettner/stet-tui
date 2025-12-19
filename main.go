@@ -11,17 +11,21 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+var docStyle = lipgloss.NewStyle().Margin(1, 2)
+
 type View int
 
 const (
-	TodoView View = iota
-	NotesView
+	TodayView View = iota
+	HistoryView
 	viewCount
 )
 
 type model struct {
 	paginator paginator.Model
 	notes     []string
+	width     int
+	height    int
 }
 
 func newModel() model {
@@ -49,11 +53,11 @@ func (m model) currentView() View {
 	return v
 }
 
-func (m model) todoView() string {
+func (m model) todayView() string {
 	return "Todo View"
 }
 
-func (m model) notesView() string {
+func (m model) historyView() string {
 	return "Notes View"
 }
 
@@ -68,6 +72,10 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
@@ -82,14 +90,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	var b strings.Builder
 	switch m.currentView() {
-	case TodoView:
-		b.WriteString(m.todoView())
-	case NotesView:
-		b.WriteString(m.notesView())
+	case TodayView:
+		b.WriteString(m.todayView())
+	case HistoryView:
+		b.WriteString(m.historyView())
 	}
 	b.WriteString("\n\n")
-	b.WriteString(m.paginator.View())
-	return b.String()
+
+	paginatorView := m.paginator.View()
+	if m.width > 0 {
+		contentWidth := max(m.width-docStyle.GetHorizontalFrameSize(), 0)
+		if contentWidth > 0 {
+			paginatorView = lipgloss.PlaceHorizontal(contentWidth, lipgloss.Center, paginatorView)
+		}
+	}
+	b.WriteString(paginatorView)
+	return docStyle.Render(b.String())
 }
 
 func main() {
