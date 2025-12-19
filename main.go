@@ -13,14 +13,6 @@ import (
 
 var docStyle = lipgloss.NewStyle().Margin(1, 2)
 
-type View int
-
-const (
-	TodayView View = iota
-	HistoryView
-	viewCount
-)
-
 type model struct {
 	paginator paginator.Model
 	notes     []string
@@ -45,6 +37,25 @@ func newModel() model {
  * Views
  */
 
+type View int
+
+type title struct {
+	text  string
+	color lipgloss.Color
+}
+
+const (
+	TodayView View = iota
+	HistoryView
+	viewCount
+)
+
+var viewTitles = [viewCount]title{
+	// TODO: make colors adaptive
+	{text: "Today", color: lipgloss.Color("#04B575")},
+	{text: "History", color: lipgloss.Color("12")},
+}
+
 func (m model) currentView() View {
 	v := View(m.paginator.Page)
 	if v < 0 || v >= viewCount {
@@ -53,12 +64,19 @@ func (m model) currentView() View {
 	return v
 }
 
+func (m model) renderTitle() string {
+	title := viewTitles[m.currentView()]
+	return lipgloss.NewStyle().
+		Background(title.color).
+		Render(title.text)
+}
+
 func (m model) todayView() string {
-	return "Todo View"
+	return "Today Contents (placeholder)"
 }
 
 func (m model) historyView() string {
-	return "Notes View"
+	return "History Contents (placeholder)"
 }
 
 /**
@@ -89,6 +107,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	var b strings.Builder
+
+	b.WriteString(m.renderTitle())
+	b.WriteString("\n\n")
+
 	switch m.currentView() {
 	case TodayView:
 		b.WriteString(m.todayView())
