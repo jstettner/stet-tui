@@ -9,12 +9,18 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// pageInitializer is an optional interface for pages that need async initialization.
+type pageInitializer interface {
+	InitCmd() tea.Cmd
+}
+
 // AppModel is the root Bubble Tea model that manages pages and global state.
 type AppModel struct {
-	pages     []Page
-	paginator paginator.Model
-	width     int
-	height    int
+	pages       []Page
+	paginator   paginator.Model
+	initialized map[PageID]bool
+	width       int
+	height      int
 }
 
 // NewAppModel creates and initializes the application model with all pages.
@@ -31,8 +37,9 @@ func NewAppModel(db *sql.DB) AppModel {
 	p.SetTotalPages(len(pages))
 
 	return AppModel{
-		pages:     pages,
-		paginator: p,
+		pages:       pages,
+		paginator:   p,
+		initialized: make(map[PageID]bool),
 	}
 }
 
@@ -54,6 +61,12 @@ func (m AppModel) renderTitle() string {
 }
 
 func (m AppModel) Init() tea.Cmd {
+	// Initialize the active page if it implements pageInitializer
+	page := m.activePage()
+	if pi, ok := page.(pageInitializer); ok {
+		m.initialized[page.ID()] = true
+		return pi.InitCmd()
+	}
 	return nil
 }
 
@@ -75,6 +88,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Track previous page to detect navigation
+	prevPage := m.paginator.Page
+
 	// Update paginator for navigation (left/right keys)
 	var paginatorCmd tea.Cmd
 	m.paginator, paginatorCmd = m.paginator.Update(msg)
@@ -84,7 +100,24 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var pageCmd tea.Cmd
 	m.pages[idx], pageCmd = m.pages[idx].Update(msg)
 
-	return m, tea.Batch(paginatorCmd, pageCmd)
+	var cmds []tea.Cmd
+	if paginatorCmd != nil {
+		cmds = append(cmds, paginatorCmd)
+	}
+	if pageCmd != nil {
+		cmds = append(cmds, pageCmd)
+	}
+
+	// If page changed, initialize the new page if it hasn't been initialized yet
+	if idx != prevPage {
+		page := m.pages[idx]
+		if pi, ok := page.(pageInitializer); ok && !m.initialized[page.ID()] {
+			m.initialized[page.ID()] = true
+			cmds = append(cmds, pi.InitCmd())
+		}
+	}
+
+	return m, tea.Batch(cmds...)
 }
 
 func (m AppModel) View() string {

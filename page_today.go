@@ -49,6 +49,44 @@ type taskCompletionSaveFailedMsg struct {
 	err       error
 }
 
+// todayCompletionsLoadedMsg contains the set of task IDs completed today.
+type todayCompletionsLoadedMsg struct {
+	completedIDs map[string]bool
+}
+
+// todayCompletionsLoadFailedMsg indicates the DB load failed.
+type todayCompletionsLoadFailedMsg struct {
+	err error
+}
+
+// loadTodayCompletionsCmd queries task_history for today's completions.
+func loadTodayCompletionsCmd(db *sql.DB) tea.Cmd {
+	return func() tea.Msg {
+		rows, err := db.Query(`
+			SELECT task_id FROM task_history
+			WHERE completed_date = date('now', 'localtime')
+		`)
+		if err != nil {
+			return todayCompletionsLoadFailedMsg{err: err}
+		}
+		defer rows.Close()
+
+		completedIDs := make(map[string]bool)
+		for rows.Next() {
+			var taskID string
+			if err := rows.Scan(&taskID); err != nil {
+				return todayCompletionsLoadFailedMsg{err: err}
+			}
+			completedIDs[taskID] = true
+		}
+		if err := rows.Err(); err != nil {
+			return todayCompletionsLoadFailedMsg{err: err}
+		}
+
+		return todayCompletionsLoadedMsg{completedIDs: completedIDs}
+	}
+}
+
 // saveTaskCompletionCmd persists the task completion state to the database.
 // If completed is true, inserts a row into task_history for today.
 // If completed is false, deletes the row for today.
@@ -235,6 +273,11 @@ func (p *TodayPage) SetSize(width, height int) {
 	p.tasks.SetWidth(contentWidth)
 }
 
+// InitCmd loads today's task completions from the database.
+func (p *TodayPage) InitCmd() tea.Cmd {
+	return loadTodayCompletionsCmd(p.db)
+}
+
 func (p *TodayPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -246,6 +289,25 @@ func (p *TodayPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case todayCompletionsLoadedMsg:
+		// Apply loaded completions to task list
+		for i, listItem := range p.tasks.Items() {
+			task, ok := listItem.(Task)
+			if !ok {
+				continue
+			}
+			if msg.completedIDs[task.id] {
+				task.completed = true
+				setCmd := p.tasks.SetItem(i, task)
+				if setCmd != nil {
+					cmds = append(cmds, setCmd)
+				}
+			}
+		}
+
+	case todayCompletionsLoadFailedMsg:
+		cmds = append(cmds, p.tasks.NewStatusMessage(fmt.Sprintf("load failed: %v", msg.err)))
+
 	case taskCompletionSavedMsg:
 		// Show status message
 		statusMsg := "marked incomplete"
