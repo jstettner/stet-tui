@@ -1,0 +1,111 @@
+package main
+
+import (
+	"strings"
+
+	"github.com/charmbracelet/bubbles/paginator"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+// AppModel is the root Bubble Tea model that manages pages and global state.
+type AppModel struct {
+	pages     []Page
+	paginator paginator.Model
+	width     int
+	height    int
+}
+
+// NewAppModel creates and initializes the application model with all pages.
+func NewAppModel() AppModel {
+	pages := []Page{
+		NewTodayPage(),
+		NewHistoryPage(),
+	}
+
+	p := paginator.New()
+	p.Type = paginator.Dots
+	p.ActiveDot = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "235", Dark: "252"}).Render("•")
+	p.InactiveDot = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "250", Dark: "238"}).Render("•")
+	p.SetTotalPages(len(pages))
+
+	return AppModel{
+		pages:     pages,
+		paginator: p,
+	}
+}
+
+// activePage returns the currently active page.
+func (m AppModel) activePage() Page {
+	idx := m.paginator.Page
+	if idx < 0 || idx >= len(m.pages) {
+		panic("invalid page index")
+	}
+	return m.pages[idx]
+}
+
+// renderTitle renders the header title for the active page.
+func (m AppModel) renderTitle() string {
+	t := m.activePage().Title()
+	return lipgloss.NewStyle().
+		Background(t.color).
+		Render(t.text)
+}
+
+func (m AppModel) Init() tea.Cmd {
+	return nil
+}
+
+func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		// Notify all pages of the new size
+		for _, page := range m.pages {
+			page.SetSize(m.width, m.height)
+		}
+		return m, nil
+
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "q":
+			return m, tea.Quit
+		}
+	}
+
+	// Update paginator for navigation (left/right keys)
+	var paginatorCmd tea.Cmd
+	m.paginator, paginatorCmd = m.paginator.Update(msg)
+
+	// Update only the active page
+	idx := m.paginator.Page
+	var pageCmd tea.Cmd
+	m.pages[idx], pageCmd = m.pages[idx].Update(msg)
+
+	return m, tea.Batch(paginatorCmd, pageCmd)
+}
+
+func (m AppModel) View() string {
+	var b strings.Builder
+
+	// View title
+	b.WriteString(m.renderTitle())
+	b.WriteString("\n\n")
+
+	// View contents from active page
+	b.WriteString(m.activePage().View())
+	b.WriteString("\n\n")
+
+	// View tab indicator (paginator)
+	paginatorView := m.paginator.View()
+	if m.width > 0 {
+		contentWidth := max(m.width-docStyle.GetHorizontalFrameSize(), 0)
+		if contentWidth > 0 {
+			paginatorView = lipgloss.PlaceHorizontal(contentWidth, lipgloss.Center, paginatorView)
+		}
+	}
+	b.WriteString(paginatorView)
+
+	return docStyle.Render(b.String())
+}
