@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -153,6 +154,14 @@ func loadTodayDataCmd(db *sql.DB) tea.Cmd {
 
 		return activeTasksLoadedMsg{tasks: tasks}
 	}
+}
+
+// sortTasksByCompletion moves incomplete tasks to the front, completed to the end.
+// Uses stable sort to preserve creation order within each group.
+func sortTasksByCompletion(tasks []Task) {
+	sort.SliceStable(tasks, func(i, j int) bool {
+		return !tasks[i].completed && tasks[j].completed
+	})
 }
 
 /**
@@ -316,7 +325,8 @@ func (p *TodayPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case activeTasksLoadedMsg:
-		// Set tasks from DB (already includes completion status)
+		// Sort so incomplete tasks appear first
+		sortTasksByCompletion(msg.tasks)
 		items := make([]list.Item, len(msg.tasks))
 		for i, t := range msg.tasks {
 			items[i] = t
@@ -384,11 +394,24 @@ func (p *TodayPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		// Toggle state (optimistic UI update)
 		item.ToggleCompleted()
 
-		// Update list synchronously - SetItem returns a cmd for filtering
-		setCmd := p.tasks.SetItem(selectedIdx, item)
-		if setCmd != nil {
-			cmds = append(cmds, setCmd)
+		// Re-sort all items so completed tasks move to the end
+		allItems := p.tasks.Items()
+		tasks := make([]Task, 0, len(allItems))
+		for i, listItem := range allItems {
+			if i == selectedIdx {
+				tasks = append(tasks, item) // use toggled version
+			} else {
+				tasks = append(tasks, listItem.(Task))
+			}
 		}
+		sortTasksByCompletion(tasks)
+
+		// Reset list with sorted items
+		sortedItems := make([]list.Item, len(tasks))
+		for i, t := range tasks {
+			sortedItems[i] = t
+		}
+		p.tasks.SetItems(sortedItems)
 
 		// Persist to DB asynchronously
 		cmds = append(cmds, saveTaskCompletionCmd(p.db, item.id, item.completed))
