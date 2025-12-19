@@ -27,9 +27,13 @@ func (t Task) FilterValue() string { return t.title }
 func (t Task) Title() string       { return t.title }
 func (t Task) Description() string { return t.description }
 
+func (t *Task) ToggleCompleted() {
+	t.completed = !t.completed
+}
+
 // Initial tasks for demonstration.
 var tasksInitial = []list.Item{
-	Task{id: "1", title: "Task 1", description: "Description 1", completed: true},
+	Task{id: "1", title: "Task 1", description: "Description 1"},
 	Task{id: "2", title: "Task 2", description: "Description 2"},
 	Task{id: "3", title: "Task 3", description: "Description 3"},
 }
@@ -152,7 +156,7 @@ type TodayPage struct {
 func NewTodayPage() *TodayPage {
 	delegate := newTaskDelegate()
 	tasks := list.New(tasksInitial, delegate, 0, docStyle.GetHeight())
-	tasks.Title = "Tasks"
+	tasks.Title = "Hit List"
 
 	return &TodayPage{
 		tasks: tasks,
@@ -177,8 +181,44 @@ func (p *TodayPage) SetSize(width, height int) {
 }
 
 func (p *TodayPage) Update(msg tea.Msg) (Page, tea.Cmd) {
-	var cmd tea.Cmd
-	p.tasks, cmd = p.tasks.Update(msg)
+	var listCmd tea.Cmd
+	p.tasks, listCmd = p.tasks.Update(msg)
+	cmd := listCmd
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		// Be robust: depending on terminal/platform, space can come through as
+		// KeySpace or KeyRunes with a single ' ' rune.
+		isSpace := msg.Type == tea.KeySpace ||
+			(msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == ' ')
+		if !isSpace {
+			break
+		}
+
+		// If the user is typing into the filter input, space should be treated as text.
+		if p.tasks.SettingFilter() {
+			break
+		}
+
+		// Use GlobalIndex() because SetItem expects indices in the unfiltered list.
+		selectedIdx := p.tasks.GlobalIndex()
+		if selectedIdx < 0 || selectedIdx >= len(p.tasks.Items()) {
+			break
+		}
+
+		item, ok := p.tasks.Items()[selectedIdx].(Task)
+		if !ok {
+			break
+		}
+
+		item.ToggleCompleted()
+
+		// Important: SetItem can return a command to recompute filtering.
+		setCmd := p.tasks.SetItem(selectedIdx, item)
+		// Add a status message so it's obvious the keypress is being handled.
+		statusCmd := p.tasks.NewStatusMessage("marked completed")
+		cmd = tea.Batch(cmd, setCmd, statusCmd)
+	}
 	return p, cmd
 }
 
