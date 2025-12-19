@@ -25,9 +25,7 @@ type model struct {
 }
 
 func newModel() model {
-
 	p := paginator.New()
-
 	p.Type = paginator.Dots
 	p.ActiveDot = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "235", Dark: "252"}).Render("•")
 	p.InactiveDot = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "250", Dark: "238"}).Render("•")
@@ -38,6 +36,30 @@ func newModel() model {
 		notes:     []string{},
 	}
 }
+
+/**
+ * Views
+ */
+
+func (m model) currentView() View {
+	v := View(m.paginator.Page)
+	if v < 0 || v >= viewCount {
+		panic("invalid page")
+	}
+	return v
+}
+
+func (m model) todoView() string {
+	return "Todo View"
+}
+
+func (m model) notesView() string {
+	return "Notes View"
+}
+
+/**
+ * App Control
+ */
 
 func (m model) Init() tea.Cmd {
 	return nil
@@ -55,26 +77,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	m.paginator, cmd = m.paginator.Update(msg)
 	return m, cmd
-}
-
-/**
-* Views
- */
-
-func (m model) currentView() View {
-	v := View(m.paginator.Page)
-	if v < 0 || v >= viewCount {
-		panic("invalid page")
-	}
-	return v
-}
-
-func (m model) todoView() string {
-	return "Todo View"
-}
-
-func (m model) notesView() string {
-	return "Notes View"
 }
 
 func (m model) View() string {
