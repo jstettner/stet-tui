@@ -1,0 +1,3 @@
+APP: 2025/12/19 16:21:04 goose: no migrations to run. current version: 1
+APP: 2025/12/19 16:28:16 OK   001_create_tasks.sql (1.1ms)
+APP: 2025/12/19 16:28:16 goose: successfully migrated database to version: 1
