@@ -28,6 +28,7 @@ func NewAppModel(db *sql.DB) AppModel {
 	pages := []Page{
 		NewTodayPage(db),
 		NewHistoryPage(),
+		NewTaskCfgPage(db),
 	}
 
 	p := paginator.New()
@@ -81,6 +82,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case InvalidateTodayPageMsg:
+		// Reset Today page's initialized state so it refetches on next view
+		delete(m.initialized, TodayPageID)
+		return m, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
@@ -91,9 +97,17 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Track previous page to detect navigation
 	prevPage := m.paginator.Page
 
-	// Update paginator for navigation (left/right keys)
+	// Check if active page captures navigation keys (e.g., text input mode)
+	capturesNav := false
+	if nc, ok := m.activePage().(navigationCapturer); ok {
+		capturesNav = nc.CapturesNavigation()
+	}
+
+	// Update paginator for navigation (left/right keys) unless page captures them
 	var paginatorCmd tea.Cmd
-	m.paginator, paginatorCmd = m.paginator.Update(msg)
+	if !capturesNav {
+		m.paginator, paginatorCmd = m.paginator.Update(msg)
+	}
 
 	// Update only the active page
 	idx := m.paginator.Page

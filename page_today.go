@@ -49,43 +49,6 @@ type taskCompletionSaveFailedMsg struct {
 	err       error
 }
 
-// todayCompletionsLoadedMsg contains the set of task IDs completed today.
-type todayCompletionsLoadedMsg struct {
-	completedIDs map[string]bool
-}
-
-// todayCompletionsLoadFailedMsg indicates the DB load failed.
-type todayCompletionsLoadFailedMsg struct {
-	err error
-}
-
-// loadTodayCompletionsCmd queries task_history for today's completions.
-func loadTodayCompletionsCmd(db *sql.DB) tea.Cmd {
-	return func() tea.Msg {
-		rows, err := db.Query(`
-			SELECT task_id FROM task_history
-			WHERE completed_date = date('now', 'localtime')
-		`)
-		if err != nil {
-			return todayCompletionsLoadFailedMsg{err: err}
-		}
-		defer rows.Close()
-
-		completedIDs := make(map[string]bool)
-		for rows.Next() {
-			var taskID string
-			if err := rows.Scan(&taskID); err != nil {
-				return todayCompletionsLoadFailedMsg{err: err}
-			}
-			completedIDs[taskID] = true
-		}
-		if err := rows.Err(); err != nil {
-			return todayCompletionsLoadFailedMsg{err: err}
-		}
-
-		return todayCompletionsLoadedMsg{completedIDs: completedIDs}
-	}
-}
 
 // saveTaskCompletionCmd persists the task completion state to the database.
 // If completed is true, inserts a row into task_history for today.
@@ -122,11 +85,74 @@ func saveTaskCompletionCmd(db *sql.DB, taskID string, completed bool) tea.Cmd {
 	}
 }
 
-// Initial tasks for demonstration.
-var tasksInitial = []list.Item{
-	Task{id: "1", title: "Task 1", description: "Description 1"},
-	Task{id: "2", title: "Task 2", description: "Description 2"},
-	Task{id: "3", title: "Task 3", description: "Description 3"},
+// activeTasksLoadedMsg contains active tasks loaded from DB with completion status.
+type activeTasksLoadedMsg struct {
+	tasks []Task
+}
+
+// activeTasksLoadFailedMsg indicates loading active tasks failed.
+type activeTasksLoadFailedMsg struct {
+	err error
+}
+
+// loadTodayDataCmd loads active, non-deleted tasks and today's completions.
+func loadTodayDataCmd(db *sql.DB) tea.Cmd {
+	return func() tea.Msg {
+		// Load active, non-deleted task definitions
+		rows, err := db.Query(`
+			SELECT id, title, description
+			FROM task_definitions
+			WHERE active = true AND deleted = false
+			ORDER BY created_at ASC
+		`)
+		if err != nil {
+			return activeTasksLoadFailedMsg{err: err}
+		}
+		defer rows.Close()
+
+		var tasks []Task
+		for rows.Next() {
+			var t Task
+			if err := rows.Scan(&t.id, &t.title, &t.description); err != nil {
+				return activeTasksLoadFailedMsg{err: err}
+			}
+			tasks = append(tasks, t)
+		}
+		if err := rows.Err(); err != nil {
+			return activeTasksLoadFailedMsg{err: err}
+		}
+
+		// Load today's completions
+		compRows, err := db.Query(`
+			SELECT task_id FROM task_history
+			WHERE completed_date = date('now', 'localtime')
+		`)
+		if err != nil {
+			return activeTasksLoadFailedMsg{err: err}
+		}
+		defer compRows.Close()
+
+		completedIDs := make(map[string]bool)
+		for compRows.Next() {
+			var taskID string
+			if err := compRows.Scan(&taskID); err != nil {
+				return activeTasksLoadFailedMsg{err: err}
+			}
+			completedIDs[taskID] = true
+		}
+		if err := compRows.Err(); err != nil {
+			return activeTasksLoadFailedMsg{err: err}
+		}
+
+		// Mark tasks as completed
+		for i := range tasks {
+			if completedIDs[tasks[i].id] {
+				tasks[i].completed = true
+			}
+		}
+
+		return activeTasksLoadedMsg{tasks: tasks}
+	}
 }
 
 /**
@@ -247,7 +273,7 @@ type TodayPage struct {
 // NewTodayPage creates and initializes the Today page.
 func NewTodayPage(db *sql.DB) *TodayPage {
 	delegate := newTaskDelegate()
-	tasks := list.New(tasksInitial, delegate, 0, docStyle.GetHeight())
+	tasks := list.New([]list.Item{}, delegate, 0, docStyle.GetHeight())
 	tasks.Title = "Hit List"
 
 	return &TodayPage{
@@ -273,9 +299,9 @@ func (p *TodayPage) SetSize(width, height int) {
 	p.tasks.SetWidth(contentWidth)
 }
 
-// InitCmd loads today's task completions from the database.
+// InitCmd loads active tasks and today's completions from the database.
 func (p *TodayPage) InitCmd() tea.Cmd {
-	return loadTodayCompletionsCmd(p.db)
+	return loadTodayDataCmd(p.db)
 }
 
 func (p *TodayPage) Update(msg tea.Msg) (Page, tea.Cmd) {
@@ -289,23 +315,15 @@ func (p *TodayPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case todayCompletionsLoadedMsg:
-		// Apply loaded completions to task list
-		for i, listItem := range p.tasks.Items() {
-			task, ok := listItem.(Task)
-			if !ok {
-				continue
-			}
-			if msg.completedIDs[task.id] {
-				task.completed = true
-				setCmd := p.tasks.SetItem(i, task)
-				if setCmd != nil {
-					cmds = append(cmds, setCmd)
-				}
-			}
+	case activeTasksLoadedMsg:
+		// Set tasks from DB (already includes completion status)
+		items := make([]list.Item, len(msg.tasks))
+		for i, t := range msg.tasks {
+			items[i] = t
 		}
+		p.tasks.SetItems(items)
 
-	case todayCompletionsLoadFailedMsg:
+	case activeTasksLoadFailedMsg:
 		cmds = append(cmds, p.tasks.NewStatusMessage(fmt.Sprintf("load failed: %v", msg.err)))
 
 	case taskCompletionSavedMsg:
@@ -380,5 +398,5 @@ func (p *TodayPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 }
 
 func (p *TodayPage) View() string {
-	return docStyle.Render(p.tasks.View())
+	return p.tasks.View()
 }

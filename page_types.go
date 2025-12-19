@@ -11,6 +11,7 @@ type PageID int
 const (
 	TodayPageID PageID = iota
 	HistoryPageID
+	TaskCfgPageID
 	pageCount
 )
 
@@ -18,6 +19,12 @@ const (
 type title struct {
 	text  string
 	color lipgloss.Color
+}
+
+// navigationCapturer is an optional interface for pages that need to capture
+// navigation keys (left/right arrows) in certain modes (e.g., text input).
+type navigationCapturer interface {
+	CapturesNavigation() bool
 }
 
 // Page is the interface that all pages must implement.
