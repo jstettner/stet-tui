@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -299,6 +300,28 @@ func (d *historyDelegate) Render(w io.Writer, m list.Model, index int, item list
 // HistoryPage
 // ---------------------------------------------------------------------------
 
+// historyKeyMap defines key bindings for the History page.
+type historyKeyMap struct {
+	Earlier key.Binding
+	Later   key.Binding
+	Toggle  key.Binding
+}
+
+var historyKeys = historyKeyMap{
+	Earlier: key.NewBinding(
+		key.WithKeys("["),
+		key.WithHelp("[", "earlier"),
+	),
+	Later: key.NewBinding(
+		key.WithKeys("]"),
+		key.WithHelp("]", "later"),
+	),
+	Toggle: key.NewBinding(
+		key.WithKeys(" "),
+		key.WithHelp("space", "toggle"),
+	),
+}
+
 // HistoryPage displays historical task completion data.
 type HistoryPage struct {
 	list         list.Model
@@ -348,7 +371,7 @@ func (p *HistoryPage) SetSize(width, height int) {
 
 	contentWidth := max(width-docStyle.GetHorizontalFrameSize(), 0)
 	p.list.SetWidth(contentWidth)
-	p.list.SetHeight(max(height-docStyle.GetVerticalFrameSize()-4, 0)) // Account for title and paginator
+	p.list.SetHeight(height)
 }
 
 func (p *HistoryPage) InitCmd() tea.Cmd {
@@ -409,22 +432,22 @@ func (p *HistoryPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "[":
+		switch {
+		case key.Matches(msg, historyKeys.Earlier):
 			if p.selectedCell > 0 {
 				p.selectedCell--
 				p.delegate.selectedCell = p.selectedCell
 			}
 			return p, nil // Consume key
 
-		case "]":
+		case key.Matches(msg, historyKeys.Later):
 			if p.selectedCell < p.daysToShow-1 {
 				p.selectedCell++
 				p.delegate.selectedCell = p.selectedCell
 			}
 			return p, nil // Consume key
 
-		case " ":
+		case key.Matches(msg, historyKeys.Toggle):
 			return p.handleSpaceToggle()
 		}
 	}
@@ -470,4 +493,12 @@ func (p *HistoryPage) handleSpaceToggle() (Page, tea.Cmd) {
 
 func (p *HistoryPage) View() string {
 	return p.list.View()
+}
+
+func (p *HistoryPage) KeyMap() []key.Binding {
+	return []key.Binding{
+		historyKeys.Earlier,
+		historyKeys.Later,
+		historyKeys.Toggle,
+	}
 }

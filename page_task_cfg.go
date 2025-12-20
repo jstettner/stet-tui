@@ -275,6 +275,28 @@ func newTaskCfgDelegate() *taskCfgDelegate {
  * TaskCfgPage implements the Page interface
  */
 
+// taskCfgKeyMap defines key bindings for the Task Configuration page.
+type taskCfgKeyMap struct {
+	Add    key.Binding
+	Toggle key.Binding
+	Delete key.Binding
+}
+
+var taskCfgKeys = taskCfgKeyMap{
+	Add: key.NewBinding(
+		key.WithKeys("a"),
+		key.WithHelp("a", "add"),
+	),
+	Toggle: key.NewBinding(
+		key.WithKeys(" "),
+		key.WithHelp("space", "toggle"),
+	),
+	Delete: key.NewBinding(
+		key.WithKeys("d"),
+		key.WithHelp("d", "delete"),
+	),
+}
+
 // taskCfgMode determines the current interaction state.
 type taskCfgMode int
 
@@ -308,16 +330,7 @@ func NewTaskCfgPage(db *sql.DB) *TaskCfgPage {
 	delegate := newTaskCfgDelegate()
 	l := list.New([]list.Item{}, delegate, 0, 0)
 	l.Title = "Task Definitions"
-	l.SetShowHelp(true)
-
-	// Additional key bindings shown in help
-	l.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{
-			key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
-			key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "toggle")),
-			key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
-		}
-	}
+	l.SetShowHelp(false)
 
 	// Title input
 	ti := textinput.New()
@@ -359,9 +372,8 @@ func (p *TaskCfgPage) SetSize(width, height int) {
 	p.width = width
 	p.height = height
 	contentWidth := max(width-docStyle.GetHorizontalFrameSize(), 0)
-	contentHeight := max(height-docStyle.GetVerticalFrameSize()-4, 0)
 	p.list.SetWidth(contentWidth)
-	p.list.SetHeight(contentHeight)
+	p.list.SetHeight(height)
 	p.titleInput.Width = max(contentWidth-4, 0)
 	p.descInput.Width = max(contentWidth-4, 0)
 }
@@ -455,14 +467,14 @@ func (p *TaskCfgPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 			break // Don't intercept when filtering
 		}
 
-		switch msg.String() {
-		case "a": // Add new task
+		switch {
+		case key.Matches(msg, taskCfgKeys.Add):
 			p.mode = taskCfgModeAddTitle
 			p.titleInput.Reset()
 			p.titleInput.Focus()
 			return p, textinput.Blink
 
-		case " ": // Toggle active (space key)
+		case key.Matches(msg, taskCfgKeys.Toggle):
 			idx := p.list.Index()
 			if idx < 0 || idx >= len(p.list.Items()) {
 				break
@@ -476,7 +488,7 @@ func (p *TaskCfgPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 			p.list.SetItem(idx, item)
 			cmds = append(cmds, toggleTaskActiveCmd(p.db, item.id, item.active))
 
-		case "d": // Delete task
+		case key.Matches(msg, taskCfgKeys.Delete):
 			idx := p.list.Index()
 			if idx < 0 || idx >= len(p.list.Items()) {
 				break
@@ -588,4 +600,12 @@ func (p *TaskCfgPage) viewConfirmDelete() string {
 		"Delete Task\n\nAre you sure you want to delete \"%s\"?\n\n(y to confirm, n or esc to cancel)",
 		p.pendingDeleteTitle,
 	)
+}
+
+func (p *TaskCfgPage) KeyMap() []key.Binding {
+	return []key.Binding{
+		taskCfgKeys.Add,
+		taskCfgKeys.Toggle,
+		taskCfgKeys.Delete,
+	}
 }

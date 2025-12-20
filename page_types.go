@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -44,4 +45,7 @@ type Page interface {
 
 	// View renders the page's content (without the outer frame/title).
 	View() string
+
+	// KeyMap returns the page's key bindings for the global help component.
+	KeyMap() []key.Binding
 }

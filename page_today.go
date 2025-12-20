@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -272,6 +273,18 @@ func newTaskDelegate() *taskDelegate {
  * TodayPage implements the Page interface
  */
 
+// todayKeyMap defines key bindings for the Today page.
+type todayKeyMap struct {
+	Toggle key.Binding
+}
+
+var todayKeys = todayKeyMap{
+	Toggle: key.NewBinding(
+		key.WithKeys(" "),
+		key.WithHelp("space", "toggle"),
+	),
+}
+
 // TodayPage displays today's tasks.
 type TodayPage struct {
 	tasks list.Model
@@ -283,6 +296,7 @@ func NewTodayPage(db *sql.DB) *TodayPage {
 	delegate := newTaskDelegate()
 	tasks := list.New([]list.Item{}, delegate, 0, 0)
 	tasks.Title = "Hit List"
+	tasks.SetShowHelp(false)
 
 	return &TodayPage{
 		tasks: tasks,
@@ -302,10 +316,9 @@ func (p *TodayPage) Title() title {
 }
 
 func (p *TodayPage) SetSize(width, height int) {
-	// Account for docStyle padding and app chrome (title + paginator).
 	contentWidth := max(width-docStyle.GetHorizontalFrameSize(), 0)
 	p.tasks.SetWidth(contentWidth)
-	p.tasks.SetHeight(max(height-docStyle.GetVerticalFrameSize()-4, 0))
+	p.tasks.SetHeight(height)
 }
 
 // InitCmd loads active tasks and today's completions from the database.
@@ -367,11 +380,7 @@ func (p *TodayPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		cmds = append(cmds, p.tasks.NewStatusMessage(fmt.Sprintf("save failed: %v", msg.err)))
 
 	case tea.KeyMsg:
-		// Be robust: depending on terminal/platform, space can come through as
-		// KeySpace or KeyRunes with a single ' ' rune.
-		isSpace := msg.Type == tea.KeySpace ||
-			(msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == ' ')
-		if !isSpace {
+		if !key.Matches(msg, todayKeys.Toggle) {
 			break
 		}
 
@@ -394,24 +403,36 @@ func (p *TodayPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		// Toggle state (optimistic UI update)
 		item.ToggleCompleted()
 
-		// Re-sort all items so completed tasks move to the end
-		allItems := p.tasks.Items()
-		tasks := make([]Task, 0, len(allItems))
-		for i, listItem := range allItems {
-			if i == selectedIdx {
-				tasks = append(tasks, item) // use toggled version
-			} else {
-				tasks = append(tasks, listItem.(Task))
-			}
-		}
-		sortTasksByCompletion(tasks)
+		// Check if filter is active
+		isFiltered := p.tasks.FilterState() == list.Filtering ||
+			p.tasks.FilterState() == list.FilterApplied
 
-		// Reset list with sorted items
-		sortedItems := make([]list.Item, len(tasks))
-		for i, t := range tasks {
-			sortedItems[i] = t
+		if isFiltered {
+			// Filter active - just update the single item without re-sorting
+			// to preserve filter state (SetItems resets filter mapping)
+			setCmd := p.tasks.SetItem(selectedIdx, item)
+			if setCmd != nil {
+				cmds = append(cmds, setCmd)
+			}
+		} else {
+			// No filter - safe to re-sort and reset items
+			allItems := p.tasks.Items()
+			tasks := make([]Task, 0, len(allItems))
+			for i, listItem := range allItems {
+				if i == selectedIdx {
+					tasks = append(tasks, item)
+				} else {
+					tasks = append(tasks, listItem.(Task))
+				}
+			}
+			sortTasksByCompletion(tasks)
+
+			sortedItems := make([]list.Item, len(tasks))
+			for i, t := range tasks {
+				sortedItems[i] = t
+			}
+			p.tasks.SetItems(sortedItems)
 		}
-		p.tasks.SetItems(sortedItems)
 
 		// Persist to DB asynchronously
 		cmds = append(cmds, saveTaskCompletionCmd(p.db, item.id, item.completed))
@@ -422,4 +443,10 @@ func (p *TodayPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 
 func (p *TodayPage) View() string {
 	return p.tasks.View()
+}
+
+func (p *TodayPage) KeyMap() []key.Binding {
+	return []key.Binding{
+		todayKeys.Toggle,
+	}
 }
