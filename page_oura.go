@@ -52,22 +52,26 @@ var ouraKeys = ouraKeyMap{
 	),
 }
 
+// hrHighlightStyle is the style for the vertical line on the chart at the selected time
+var hrHighlightStyle = lipgloss.NewStyle().Background(lipgloss.Color("#444444"))
+
 // OuraPage displays Oura health data.
 type OuraPage struct {
-	client      *OuraClient
-	readiness   *DailyReadiness
-	heartRate   []HeartRatePoint
-	hrChart     timeserieslinechart.Model
-	hrTable     table.Model
-	pollCount   int
-	lastPoll    time.Time
-	err         error
-	loading     bool
-	needsAuth   bool
-	authPending bool
-	authCancel  context.CancelFunc
-	width       int
-	height      int
+	client       *OuraClient
+	readiness    *DailyReadiness
+	heartRate    []HeartRatePoint
+	hrChart      timeserieslinechart.Model
+	hrTable      table.Model
+	selectedTime time.Time // timestamp of the currently selected heart rate point
+	pollCount    int
+	lastPoll     time.Time
+	err          error
+	loading      bool
+	needsAuth    bool
+	authPending  bool
+	authCancel   context.CancelFunc
+	width        int
+	height       int
 }
 
 // NewOuraPage creates and initializes the Oura page.
@@ -176,6 +180,8 @@ func (p *OuraPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		if len(p.heartRate) > 0 {
 			p.buildHeartRateChart()
 			p.buildHeartRateTable()
+			// Initialize highlight at the first row (most recent data point)
+			p.updateChartHighlight()
 		}
 		return p, nil
 
@@ -227,6 +233,8 @@ func (p *OuraPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		if len(p.heartRate) > 0 {
 			var cmd tea.Cmd
 			p.hrTable, cmd = p.hrTable.Update(msg)
+			// Update the chart highlight to match the selected row
+			p.updateChartHighlight()
 			return p, cmd
 		}
 	}
@@ -295,6 +303,35 @@ func (p *OuraPage) buildHeartRateTable() {
 		table.WithHeight(15),
 		table.WithStyles(s),
 	)
+}
+
+// updateChartHighlight updates the chart to show a vertical line at the selected time
+func (p *OuraPage) updateChartHighlight() {
+	if len(p.heartRate) == 0 {
+		return
+	}
+
+	// Get the selected row index from the table cursor
+	cursor := p.hrTable.Cursor()
+
+	// Table rows are in reverse order (most recent first)
+	// so cursor 0 = heartRate[len-1], cursor 1 = heartRate[len-2], etc.
+	hrIndex := len(p.heartRate) - 1 - cursor
+	if hrIndex < 0 || hrIndex >= len(p.heartRate) {
+		return
+	}
+
+	// Parse the timestamp of the selected point
+	t, err := time.Parse(time.RFC3339, p.heartRate[hrIndex].Timestamp)
+	if err != nil {
+		return
+	}
+
+	p.selectedTime = t
+
+	// Rebuild the chart to clear previous highlight, then apply new one
+	p.buildHeartRateChart()
+	p.hrChart.SetColumnBackgroundStyle(t, hrHighlightStyle)
 }
 
 func (p *OuraPage) View() string {
