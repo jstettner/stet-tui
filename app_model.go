@@ -16,6 +16,16 @@ type pageInitializer interface {
 	InitCmd() tea.Cmd
 }
 
+// Styles for dim page titles in the navigation indicator.
+var (
+	dimStyle1 = lipgloss.NewStyle().
+			Background(lipgloss.Color("#666666")).
+			Foreground(lipgloss.Color("#888888"))
+	dimStyle2 = lipgloss.NewStyle().
+			Background(lipgloss.Color("#444444")).
+			Foreground(lipgloss.Color("#666666"))
+)
+
 // globalKeyMap defines application-wide key bindings.
 type globalKeyMap struct {
 	Left  key.Binding
@@ -84,13 +94,73 @@ func (m AppModel) activePage() Page {
 	return m.pages[idx]
 }
 
-// renderTitle renders the header title for the active page.
+// visiblePage represents a page to display in the navigation indicator.
+type visiblePage struct {
+	index    int
+	dimLevel int // 0 = full color, 1 = dim, 2 = dimmer
+}
+
+// getVisiblePages returns 3 pages to display with their dim levels.
+// The current page has dimLevel 0, adjacent pages have higher dim levels.
+func getVisiblePages(current, total int) []visiblePage {
+	if total < 3 {
+		// Fewer than 3 pages - show all with appropriate dimming
+		pages := make([]visiblePage, total)
+		for i := 0; i < total; i++ {
+			dim := current - i
+			if dim < 0 {
+				dim = -dim
+			}
+			pages[i] = visiblePage{index: i, dimLevel: dim}
+		}
+		return pages
+	}
+
+	// Determine the window of 3 pages to show
+	start := current - 1
+	if start < 0 {
+		start = 0
+	}
+	if start+3 > total {
+		start = total - 3
+	}
+
+	pages := make([]visiblePage, 3)
+	for i := 0; i < 3; i++ {
+		idx := start + i
+		dim := current - idx
+		if dim < 0 {
+			dim = -dim
+		}
+		pages[i] = visiblePage{index: idx, dimLevel: dim}
+	}
+	return pages
+}
+
+// renderTitle renders the navigation indicator showing current and adjacent pages.
 func (m AppModel) renderTitle() string {
-	t := m.activePage().Title()
-	return lipgloss.NewStyle().
-		Background(t.color).
-		Foreground(lipgloss.Color("#FFFFFF")).
-		Render(t.text)
+	visible := getVisiblePages(m.paginator.Page, len(m.pages))
+	titles := make([]string, len(visible))
+
+	for i, vp := range visible {
+		t := m.pages[vp.index].Title()
+		var styled string
+		switch vp.dimLevel {
+		case 0:
+			// Current page: full color
+			styled = lipgloss.NewStyle().
+				Background(t.color).
+				Foreground(lipgloss.Color("#FFFFFF")).
+				Render(t.text)
+		case 1:
+			styled = dimStyle1.Render(t.text)
+		default:
+			styled = dimStyle2.Render(t.text)
+		}
+		titles[i] = styled
+	}
+
+	return strings.Join(titles, "   ")
 }
 
 // combinedKeyMap implements help.KeyMap by combining page and global keys.
