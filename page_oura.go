@@ -8,6 +8,7 @@ import (
 
 	"github.com/NimbleMarkets/ntcharts/linechart/timeserieslinechart"
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -57,6 +58,7 @@ type OuraPage struct {
 	readiness   *DailyReadiness
 	heartRate   []HeartRatePoint
 	hrChart     timeserieslinechart.Model
+	hrTable     table.Model
 	pollCount   int
 	lastPoll    time.Time
 	err         error
@@ -170,9 +172,10 @@ func (p *OuraPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		p.loading = false
 		p.err = nil
 
-		// Build the heart rate chart if we have data
+		// Build the heart rate chart and table if we have data
 		if len(p.heartRate) > 0 {
 			p.buildHeartRateChart()
+			p.buildHeartRateTable()
 		}
 		return p, nil
 
@@ -219,6 +222,13 @@ func (p *OuraPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 			p.loading = true
 			return p, p.fetchDataCmd()
 		}
+
+		// Forward key events to the table for navigation
+		if len(p.heartRate) > 0 {
+			var cmd tea.Cmd
+			p.hrTable, cmd = p.hrTable.Update(msg)
+			return p, cmd
+		}
 	}
 
 	return p, nil
@@ -243,6 +253,48 @@ func (p *OuraPage) buildHeartRateChart() {
 
 	// Draw the chart using braille characters for higher resolution
 	p.hrChart.DrawBraille()
+}
+
+// buildHeartRateTable creates the heart rate table from the data.
+func (p *OuraPage) buildHeartRateTable() {
+	columns := []table.Column{
+		{Title: "Time", Width: 10},
+		{Title: "BPM", Width: 6},
+		{Title: "Source", Width: 10},
+	}
+
+	// Build rows in reverse order (most recent first)
+	rows := make([]table.Row, 0, len(p.heartRate))
+	for i := len(p.heartRate) - 1; i >= 0; i-- {
+		hr := p.heartRate[i]
+		// Parse timestamp and format as HH:MM:SS
+		t, err := time.Parse(time.RFC3339, hr.Timestamp)
+		timeStr := hr.Timestamp
+		if err == nil {
+			timeStr = t.Format("15:04:05")
+		}
+		rows = append(rows, table.Row{timeStr, fmt.Sprintf("%d", hr.BPM), hr.Source})
+	}
+
+	// Create table with purple accent styling
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("#8B5CF6")).
+		BorderBottom(true).
+		Bold(true)
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#8B5CF6")).
+		Bold(false)
+
+	p.hrTable = table.New(
+		table.WithColumns(columns),
+		table.WithRows(rows),
+		table.WithFocused(true),
+		table.WithHeight(15),
+		table.WithStyles(s),
+	)
 }
 
 func (p *OuraPage) View() string {
@@ -371,6 +423,12 @@ func (p *OuraPage) View() string {
 			}
 			avgHR := sumHR / len(p.heartRate)
 			b.WriteString(infoStyle.Render(fmt.Sprintf("Min: %d  Avg: %d  Max: %d  (%d readings)", minHR, avgHR, maxHR, len(p.heartRate))))
+			b.WriteString("\n\n")
+
+			// Display heart rate table
+			b.WriteString(infoStyle.Render("Recent Samples:"))
+			b.WriteString("\n")
+			b.WriteString(p.hrTable.View())
 			b.WriteString("\n")
 		}
 	} else if p.err == nil {
