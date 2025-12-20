@@ -98,6 +98,12 @@ func (p *OuraPage) Title() title {
 func (p *OuraPage) SetSize(width, height int) {
 	p.width = width
 	p.height = height
+	// Rebuild chart and table with new dimensions
+	if len(p.heartRate) > 0 {
+		p.buildHeartRateChart()
+		p.buildHeartRateTable()
+		p.updateChartHighlight()
+	}
 }
 
 // InitCmd returns the initial command to start polling.
@@ -301,11 +307,17 @@ func (p *OuraPage) buildHeartRateTable() {
 		Background(lipgloss.Color("#8B5CF6")).
 		Bold(false)
 
+	// Calculate available height for the table
+	// Account for: title(2) + score(2) + contributors header+grid(5) +
+	// hr chart section(11) + "Recent Samples" header(1) + status(2) + padding
+	fixedContentHeight := 23 + docStyle.GetVerticalFrameSize()
+	tableHeight := max(p.height-fixedContentHeight, 5) // minimum 5 rows
+
 	p.hrTable = table.New(
 		table.WithColumns(columns),
 		table.WithRows(rows),
 		table.WithFocused(true),
-		table.WithHeight(15),
+		table.WithHeight(tableHeight),
 		table.WithStyles(s),
 	)
 }
