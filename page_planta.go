@@ -102,6 +102,10 @@ func (p *PlantaPage) SetSize(width, height int) {
 
 // InitCmd returns the initial command to start polling.
 func (p *PlantaPage) InitCmd() tea.Cmd {
+	// Recheck auth state at initialization time for consistency
+	p.needsAuth = !p.client.Auth().HasCredentials()
+	p.loading = !p.needsAuth
+
 	if p.needsAuth {
 		return nil
 	}

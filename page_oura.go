@@ -102,6 +102,11 @@ func (p *OuraPage) SetSize(width, height int) {
 
 // InitCmd returns the initial command to start polling.
 func (p *OuraPage) InitCmd() tea.Cmd {
+	// Recheck auth state at initialization time, not creation time
+	// This avoids a race condition where tokens may still be loading when the page is created
+	p.needsAuth = !p.client.Auth().HasCredentials() || !p.client.IsAuthenticated()
+	p.loading = !p.needsAuth
+
 	if p.needsAuth {
 		return nil // Don't start polling if auth is needed
 	}
