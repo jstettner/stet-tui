@@ -27,7 +27,7 @@ type AppModel struct {
 func NewAppModel(db *sql.DB) AppModel {
 	pages := []Page{
 		NewTodayPage(db),
-		NewHistoryPage(),
+		NewHistoryPage(db),
 		NewTaskCfgPage(db),
 	}
 
