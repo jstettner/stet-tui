@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/joho/godotenv"
 	"github.com/pressly/goose/v3"
 	"gopkg.in/natefinch/lumberjack.v2"
 	_ "modernc.org/sqlite"
@@ -21,6 +22,9 @@ const dbPath = "$HOME/.local/share/stet/data.db"
 const logPath = "$HOME/.local/share/stet/debug.log"
 
 func main() {
+	// Load .env file (ignore error if not found)
+	_ = godotenv.Load()
+
 	fileLogger := log.New(&lumberjack.Logger{
 		Filename:   os.ExpandEnv(logPath),
 		MaxSize:    5,  // Megabytes before it rotates
@@ -56,8 +60,14 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Initialize Oura client with credentials from environment
+	ouraClient := NewOuraClient(
+		os.Getenv("OURA_CLIENT_ID"),
+		os.Getenv("OURA_CLIENT_SECRET"),
+	)
+
 	// Alt-screen makes this a true full-window TUI (no scrollback spam).
-	p := tea.NewProgram(NewAppModel(db), tea.WithAltScreen())
+	p := tea.NewProgram(NewAppModel(db, ouraClient), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Println("Error running program:", err)
 		os.Exit(1)

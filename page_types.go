@@ -11,6 +11,7 @@ type PageID int
 
 const (
 	TodayPageID PageID = iota
+	OuraPageID
 	HistoryPageID
 	TaskCfgPageID
 	pageCount
