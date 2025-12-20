@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NimbleMarkets/ntcharts/linechart/timeserieslinechart"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -18,6 +19,7 @@ type ouraTickMsg time.Time
 
 type ouraDataLoadedMsg struct {
 	readiness *DailyReadiness
+	heartRate []HeartRatePoint
 }
 
 type ouraDataFailedMsg struct {
@@ -53,6 +55,8 @@ var ouraKeys = ouraKeyMap{
 type OuraPage struct {
 	client      *OuraClient
 	readiness   *DailyReadiness
+	heartRate   []HeartRatePoint
+	hrChart     timeserieslinechart.Model
 	pollCount   int
 	lastPoll    time.Time
 	err         error
@@ -96,7 +100,7 @@ func (p *OuraPage) InitCmd() tea.Cmd {
 		return nil // Don't start polling if auth is needed
 	}
 	return tea.Batch(
-		p.fetchReadinessCmd(),
+		p.fetchDataCmd(),
 		ouraTickCmd(),
 	)
 }
@@ -108,14 +112,21 @@ func ouraTickCmd() tea.Cmd {
 	})
 }
 
-// fetchReadinessCmd returns a command that fetches readiness data.
-func (p *OuraPage) fetchReadinessCmd() tea.Cmd {
+// fetchDataCmd returns a command that fetches readiness and heart rate data.
+func (p *OuraPage) fetchDataCmd() tea.Cmd {
 	return func() tea.Msg {
 		readiness, err := p.client.GetTodayReadiness()
 		if err != nil {
 			return ouraDataFailedMsg{err: err}
 		}
-		return ouraDataLoadedMsg{readiness: readiness}
+
+		heartRate, err := p.client.GetTodayHeartRate()
+		if err != nil {
+			// Don't fail completely if heart rate fails, just log it
+			heartRate = nil
+		}
+
+		return ouraDataLoadedMsg{readiness: readiness, heartRate: heartRate}
 	}
 }
 
@@ -150,13 +161,19 @@ func (p *OuraPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		}
 		p.pollCount++
 		p.loading = true
-		return p, tea.Batch(p.fetchReadinessCmd(), ouraTickCmd())
+		return p, tea.Batch(p.fetchDataCmd(), ouraTickCmd())
 
 	case ouraDataLoadedMsg:
 		p.readiness = msg.readiness
+		p.heartRate = msg.heartRate
 		p.lastPoll = time.Now()
 		p.loading = false
 		p.err = nil
+
+		// Build the heart rate chart if we have data
+		if len(p.heartRate) > 0 {
+			p.buildHeartRateChart()
+		}
 		return p, nil
 
 	case ouraDataFailedMsg:
@@ -174,7 +191,7 @@ func (p *OuraPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		p.loading = true
 		p.err = nil
 		// Start fetching data now that we're authenticated
-		return p, tea.Batch(p.fetchReadinessCmd(), ouraTickCmd())
+		return p, tea.Batch(p.fetchDataCmd(), ouraTickCmd())
 
 	case ouraAuthFailedMsg:
 		p.authPending = false
@@ -200,11 +217,32 @@ func (p *OuraPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 				return p, nil
 			}
 			p.loading = true
-			return p, p.fetchReadinessCmd()
+			return p, p.fetchDataCmd()
 		}
 	}
 
 	return p, nil
+}
+
+// buildHeartRateChart creates the heart rate chart from the data.
+func (p *OuraPage) buildHeartRateChart() {
+	chartWidth := max(p.width-docStyle.GetHorizontalFrameSize()-4, 40)
+	chartHeight := 8
+
+	p.hrChart = timeserieslinechart.New(chartWidth, chartHeight)
+
+	// Add heart rate points to chart
+	for _, hr := range p.heartRate {
+		// Parse timestamp (ISO 8601 format)
+		t, err := time.Parse(time.RFC3339, hr.Timestamp)
+		if err != nil {
+			continue
+		}
+		p.hrChart.Push(timeserieslinechart.TimePoint{Time: t, Value: float64(hr.BPM)})
+	}
+
+	// Draw the chart using braille characters for higher resolution
+	p.hrChart.DrawBraille()
 }
 
 func (p *OuraPage) View() string {
@@ -311,6 +349,30 @@ func (p *OuraPage) View() string {
 			}
 		}
 		b.WriteString("\n")
+
+		// Display heart rate chart
+		if len(p.heartRate) > 0 {
+			b.WriteString(infoStyle.Render("Heart Rate (BPM):"))
+			b.WriteString("\n")
+			b.WriteString(p.hrChart.View())
+			b.WriteString("\n")
+
+			// Show min/max/avg heart rate
+			var minHR, maxHR, sumHR int
+			minHR = 999
+			for _, hr := range p.heartRate {
+				if hr.BPM < minHR {
+					minHR = hr.BPM
+				}
+				if hr.BPM > maxHR {
+					maxHR = hr.BPM
+				}
+				sumHR += hr.BPM
+			}
+			avgHR := sumHR / len(p.heartRate)
+			b.WriteString(infoStyle.Render(fmt.Sprintf("Min: %d  Avg: %d  Max: %d  (%d readings)", minHR, avgHR, maxHR, len(p.heartRate))))
+			b.WriteString("\n")
+		}
 	} else if p.err == nil {
 		b.WriteString("No readiness data available for today yet.\n")
 	}

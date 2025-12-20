@@ -38,6 +38,19 @@ type ReadinessResponse struct {
 	NextToken string           `json:"next_token,omitempty"`
 }
 
+// HeartRatePoint represents a single heart rate measurement.
+type HeartRatePoint struct {
+	BPM       int    `json:"bpm"`
+	Source    string `json:"source"`
+	Timestamp string `json:"timestamp"`
+}
+
+// HeartRateResponse represents the API response for heart rate data.
+type HeartRateResponse struct {
+	Data      []HeartRatePoint `json:"data"`
+	NextToken string           `json:"next_token,omitempty"`
+}
+
 // OuraClient is a client for the Oura API.
 type OuraClient struct {
 	auth       *OuraAuth
@@ -130,4 +143,66 @@ func (c *OuraClient) GetTodayReadiness() (*DailyReadiness, error) {
 
 	// Return the most recent readiness score
 	return &readinessResp.Data[len(readinessResp.Data)-1], nil
+}
+
+// GetTodayHeartRate fetches heart rate data for today.
+func (c *OuraClient) GetTodayHeartRate() ([]HeartRatePoint, error) {
+	tokens, err := c.auth.GetValidTokens()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get valid tokens: %w", err)
+	}
+	if tokens == nil {
+		return nil, fmt.Errorf("not authenticated")
+	}
+
+	today := time.Now().Format("2006-01-02")
+	url := fmt.Sprintf("%s/usercollection/heartrate?start_date=%s&end_date=%s",
+		ouraAPIBaseURL, today, today)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Handle 401 - try to refresh and retry once
+	if resp.StatusCode == http.StatusUnauthorized {
+		newTokens, err := c.auth.RefreshTokens(tokens.RefreshToken)
+		if err != nil {
+			return nil, fmt.Errorf("token refresh failed: %w", err)
+		}
+
+		req.Header.Set("Authorization", "Bearer "+newTokens.AccessToken)
+		resp, err = c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("retry request failed: %w", err)
+		}
+		defer resp.Body.Close()
+	}
+
+	if resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("subscription expired - Oura data not available")
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, fmt.Errorf("rate limited - please wait")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+	}
+
+	var hrResp HeartRateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&hrResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return hrResp.Data, nil
 }

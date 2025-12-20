@@ -200,7 +200,7 @@ func (a *OuraAuth) StartAuthFlow(ctx context.Context) (<-chan *OuraTokens, <-cha
 		}()
 
 		// Build authorization URL
-		authURL := fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=code&scope=daily",
+		authURL := fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=code&scope=daily+heartrate",
 			ouraAuthURL,
 			url.QueryEscape(a.ClientID),
 			url.QueryEscape(ouraRedirectURI),

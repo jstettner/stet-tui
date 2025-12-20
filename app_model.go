@@ -19,10 +19,8 @@ type pageInitializer interface {
 // Styles for dim page titles in the navigation indicator.
 var (
 	dimStyle1 = lipgloss.NewStyle().
-			Background(lipgloss.Color("#666666")).
 			Foreground(lipgloss.Color("#888888"))
 	dimStyle2 = lipgloss.NewStyle().
-			Background(lipgloss.Color("#444444")).
 			Foreground(lipgloss.Color("#666666"))
 )
 
@@ -101,9 +99,16 @@ type visiblePage struct {
 	dimLevel int // 0 = full color, 1 = dim, 2 = dimmer
 }
 
-// getVisiblePages returns 3 pages to display with their dim levels.
-// The current page has dimLevel 0, adjacent pages have higher dim levels.
-func getVisiblePages(current, total int) []visiblePage {
+// visiblePagesResult contains the visible pages and whether there are more pages in each direction.
+type visiblePagesResult struct {
+	pages    []visiblePage
+	hasLeft  bool
+	hasRight bool
+}
+
+// getVisiblePages returns up to 3 pages to display with their dim levels,
+// plus indicators for whether more pages exist in each direction.
+func getVisiblePages(current, total int) visiblePagesResult {
 	if total < 3 {
 		// Fewer than 3 pages - show all with appropriate dimming
 		pages := make([]visiblePage, total)
@@ -114,7 +119,7 @@ func getVisiblePages(current, total int) []visiblePage {
 			}
 			pages[i] = visiblePage{index: i, dimLevel: dim}
 		}
-		return pages
+		return visiblePagesResult{pages: pages, hasLeft: false, hasRight: false}
 	}
 
 	// Determine the window of 3 pages to show
@@ -135,15 +140,19 @@ func getVisiblePages(current, total int) []visiblePage {
 		}
 		pages[i] = visiblePage{index: idx, dimLevel: dim}
 	}
-	return pages
+	return visiblePagesResult{
+		pages:    pages,
+		hasLeft:  start > 0,
+		hasRight: start+3 < total,
+	}
 }
 
 // renderTitle renders the navigation indicator showing current and adjacent pages.
 func (m AppModel) renderTitle() string {
-	visible := getVisiblePages(m.paginator.Page, len(m.pages))
-	titles := make([]string, len(visible))
+	result := getVisiblePages(m.paginator.Page, len(m.pages))
+	titles := make([]string, len(result.pages))
 
-	for i, vp := range visible {
+	for i, vp := range result.pages {
 		t := m.pages[vp.index].Title()
 		var styled string
 		switch vp.dimLevel {
@@ -161,7 +170,29 @@ func (m AppModel) renderTitle() string {
 		titles[i] = styled
 	}
 
-	return strings.Join(titles, "   ")
+	// Build the title bar with consistent spacing for arrows
+	var b strings.Builder
+
+	// Left arrow slot (always same width for consistent spacing)
+	if result.hasLeft {
+		b.WriteString("←")
+	} else {
+		b.WriteString(" ")
+	}
+	b.WriteString("   ")
+
+	// Page titles
+	b.WriteString(strings.Join(titles, "   "))
+
+	// Right arrow slot (always same width for consistent spacing)
+	b.WriteString("   ")
+	if result.hasRight {
+		b.WriteString("→")
+	} else {
+		b.WriteString(" ")
+	}
+
+	return b.String()
 }
 
 // combinedKeyMap implements help.KeyMap by combining page and global keys.

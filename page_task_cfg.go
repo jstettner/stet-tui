@@ -78,6 +78,17 @@ type taskDeleteFailedMsg struct {
 	err    error
 }
 
+// taskEditedMsg indicates a task was successfully edited.
+type taskEditedMsg struct {
+	task TaskDefinition
+}
+
+// taskEditFailedMsg indicates editing a task failed.
+type taskEditFailedMsg struct {
+	taskID string
+	err    error
+}
+
 // InvalidateTodayPageMsg signals AppModel to reset Today page's initialized state.
 type InvalidateTodayPageMsg struct{}
 
@@ -158,6 +169,24 @@ func softDeleteTaskCmd(db *sql.DB, taskID string) tea.Cmd {
 			return taskDeleteFailedMsg{taskID: taskID, err: err}
 		}
 		return taskDeletedMsg{taskID: taskID}
+	}
+}
+
+// updateTaskDefinitionCmd updates a task definition's title and description.
+func updateTaskDefinitionCmd(db *sql.DB, taskID, title, description string, active bool) tea.Cmd {
+	return func() tea.Msg {
+		_, err := db.Exec(`
+			UPDATE task_definitions SET title = ?, description = ? WHERE id = ?
+		`, title, description, taskID)
+		if err != nil {
+			return taskEditFailedMsg{taskID: taskID, err: err}
+		}
+		return taskEditedMsg{task: TaskDefinition{
+			id:          taskID,
+			title:       title,
+			description: description,
+			active:      active,
+		}}
 	}
 }
 
@@ -278,6 +307,7 @@ func newTaskCfgDelegate() *taskCfgDelegate {
 // taskCfgKeyMap defines key bindings for the Task Configuration page.
 type taskCfgKeyMap struct {
 	Add    key.Binding
+	Edit   key.Binding
 	Toggle key.Binding
 	Delete key.Binding
 }
@@ -286,6 +316,10 @@ var taskCfgKeys = taskCfgKeyMap{
 	Add: key.NewBinding(
 		key.WithKeys("a"),
 		key.WithHelp("a", "add"),
+	),
+	Edit: key.NewBinding(
+		key.WithKeys("e"),
+		key.WithHelp("e", "edit"),
 	),
 	Toggle: key.NewBinding(
 		key.WithKeys(" "),
@@ -304,6 +338,8 @@ const (
 	taskCfgModeList taskCfgMode = iota
 	taskCfgModeAddTitle
 	taskCfgModeAddDesc
+	taskCfgModeEditTitle
+	taskCfgModeEditDesc
 	taskCfgModeConfirmDelete
 )
 
@@ -313,9 +349,13 @@ type TaskCfgPage struct {
 	db   *sql.DB
 	mode taskCfgMode
 
-	// Input fields for adding tasks
+	// Input fields for adding/editing tasks
 	titleInput textinput.Model
 	descInput  textinput.Model
+
+	// For edit mode
+	editingTaskID     string
+	editingTaskActive bool
 
 	// For delete confirmation
 	pendingDeleteID    string
@@ -389,6 +429,10 @@ func (p *TaskCfgPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		return p.updateAddTitleMode(msg)
 	case taskCfgModeAddDesc:
 		return p.updateAddDescMode(msg)
+	case taskCfgModeEditTitle:
+		return p.updateEditTitleMode(msg)
+	case taskCfgModeEditDesc:
+		return p.updateEditDescMode(msg)
 	case taskCfgModeConfirmDelete:
 		return p.updateConfirmDeleteMode(msg)
 	}
@@ -424,6 +468,20 @@ func (p *TaskCfgPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 
 	case taskAddFailedMsg:
 		cmds = append(cmds, p.list.NewStatusMessage(fmt.Sprintf("add failed: %v", msg.err)))
+
+	// Handle edit success
+	case taskEditedMsg:
+		for i, item := range p.list.Items() {
+			if t, ok := item.(TaskDefinition); ok && t.id == msg.task.id {
+				p.list.SetItem(i, msg.task)
+				break
+			}
+		}
+		cmds = append(cmds, p.list.NewStatusMessage("Task updated"))
+		cmds = append(cmds, func() tea.Msg { return InvalidateTodayPageMsg{} })
+
+	case taskEditFailedMsg:
+		cmds = append(cmds, p.list.NewStatusMessage(fmt.Sprintf("edit failed: %v", msg.err)))
 
 	// Handle toggle success
 	case taskActiveToggledMsg:
@@ -471,6 +529,23 @@ func (p *TaskCfgPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		case key.Matches(msg, taskCfgKeys.Add):
 			p.mode = taskCfgModeAddTitle
 			p.titleInput.Reset()
+			p.titleInput.Focus()
+			return p, textinput.Blink
+
+		case key.Matches(msg, taskCfgKeys.Edit):
+			idx := p.list.Index()
+			if idx < 0 || idx >= len(p.list.Items()) {
+				break
+			}
+			item, ok := p.list.Items()[idx].(TaskDefinition)
+			if !ok {
+				break
+			}
+			p.editingTaskID = item.id
+			p.editingTaskActive = item.active
+			p.titleInput.SetValue(item.title)
+			p.descInput.SetValue(item.description)
+			p.mode = taskCfgModeEditTitle
 			p.titleInput.Focus()
 			return p, textinput.Blink
 
@@ -549,6 +624,53 @@ func (p *TaskCfgPage) updateAddDescMode(msg tea.Msg) (Page, tea.Cmd) {
 	return p, cmd
 }
 
+func (p *TaskCfgPage) updateEditTitleMode(msg tea.Msg) (Page, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc":
+			p.editingTaskID = ""
+			p.mode = taskCfgModeList
+			return p, nil
+		case "enter":
+			if strings.TrimSpace(p.titleInput.Value()) == "" {
+				return p, nil // Don't proceed with empty title
+			}
+			p.mode = taskCfgModeEditDesc
+			p.descInput.Focus()
+			return p, textinput.Blink
+		}
+	}
+
+	var cmd tea.Cmd
+	p.titleInput, cmd = p.titleInput.Update(msg)
+	return p, cmd
+}
+
+func (p *TaskCfgPage) updateEditDescMode(msg tea.Msg) (Page, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc":
+			p.editingTaskID = ""
+			p.mode = taskCfgModeList
+			return p, nil
+		case "enter":
+			taskID := p.editingTaskID
+			active := p.editingTaskActive
+			title := strings.TrimSpace(p.titleInput.Value())
+			desc := strings.TrimSpace(p.descInput.Value())
+			p.editingTaskID = ""
+			p.mode = taskCfgModeList
+			return p, updateTaskDefinitionCmd(p.db, taskID, title, desc, active)
+		}
+	}
+
+	var cmd tea.Cmd
+	p.descInput, cmd = p.descInput.Update(msg)
+	return p, cmd
+}
+
 func (p *TaskCfgPage) updateConfirmDeleteMode(msg tea.Msg) (Page, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -574,6 +696,10 @@ func (p *TaskCfgPage) View() string {
 		return p.viewAddTitle()
 	case taskCfgModeAddDesc:
 		return p.viewAddDesc()
+	case taskCfgModeEditTitle:
+		return p.viewEditTitle()
+	case taskCfgModeEditDesc:
+		return p.viewEditDesc()
 	case taskCfgModeConfirmDelete:
 		return p.viewConfirmDelete()
 	}
@@ -595,6 +721,21 @@ func (p *TaskCfgPage) viewAddDesc() string {
 	)
 }
 
+func (p *TaskCfgPage) viewEditTitle() string {
+	return fmt.Sprintf(
+		"Edit Task\n\nTitle:\n%s\n\n(enter to continue, esc to cancel)",
+		p.titleInput.View(),
+	)
+}
+
+func (p *TaskCfgPage) viewEditDesc() string {
+	return fmt.Sprintf(
+		"Edit Task\n\nTitle: %s\n\nDescription:\n%s\n\n(enter to save, esc to cancel)",
+		p.titleInput.Value(),
+		p.descInput.View(),
+	)
+}
+
 func (p *TaskCfgPage) viewConfirmDelete() string {
 	return fmt.Sprintf(
 		"Delete Task\n\nAre you sure you want to delete \"%s\"?\n\n(y to confirm, n or esc to cancel)",
@@ -605,6 +746,7 @@ func (p *TaskCfgPage) viewConfirmDelete() string {
 func (p *TaskCfgPage) KeyMap() []key.Binding {
 	return []key.Binding{
 		taskCfgKeys.Add,
+		taskCfgKeys.Edit,
 		taskCfgKeys.Toggle,
 		taskCfgKeys.Delete,
 	}
