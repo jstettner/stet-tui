@@ -42,6 +42,21 @@ type historyDataLoadFailedMsg struct {
 	err error
 }
 
+// historyCompletionSavedMsg indicates the completion toggle was saved.
+type historyCompletionSavedMsg struct {
+	taskID    string
+	date      string
+	completed bool
+}
+
+// historyCompletionSaveFailedMsg indicates the completion toggle failed.
+type historyCompletionSaveFailedMsg struct {
+	taskID    string
+	date      string
+	completed bool
+	err       error
+}
+
 // ---------------------------------------------------------------------------
 // Database commands
 // ---------------------------------------------------------------------------
@@ -109,6 +124,28 @@ func loadHistoryDataCmd(db *sql.DB, daysToShow int) tea.Cmd {
 	}
 }
 
+func saveHistoryCompletionCmd(db *sql.DB, taskID, date string, completed bool) tea.Cmd {
+	return func() tea.Msg {
+		var err error
+		if completed {
+			_, err = db.Exec(`
+				INSERT INTO task_history (id, task_id, completed_date)
+				VALUES (lower(hex(randomblob(16))), ?, ?)
+				ON CONFLICT(task_id, completed_date) DO NOTHING
+			`, taskID, date)
+		} else {
+			_, err = db.Exec(`
+				DELETE FROM task_history
+				WHERE task_id = ? AND completed_date = ?
+			`, taskID, date)
+		}
+		if err != nil {
+			return historyCompletionSaveFailedMsg{taskID: taskID, date: date, completed: completed, err: err}
+		}
+		return historyCompletionSavedMsg{taskID: taskID, date: date, completed: completed}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Width calculation
 // ---------------------------------------------------------------------------
@@ -156,8 +193,10 @@ var (
 
 type historyDelegate struct {
 	list.DefaultDelegate
-	daysToShow int
-	dateRange  []string // Pre-computed list of date strings (oldest to newest)
+	daysToShow   int
+	dateRange    []string // Pre-computed list of date strings (newest to oldest)
+	selectedCell int      // which cell to highlight
+	selectedRow  int      // which row to highlight (matches list.Index())
 }
 
 func newHistoryDelegate(daysToShow int) *historyDelegate {
@@ -182,14 +221,25 @@ func (d *historyDelegate) generateDateRange() {
 	}
 }
 
-func (d *historyDelegate) renderHeatmap(task HistoryTask) string {
+func (d *historyDelegate) renderHeatmap(task HistoryTask, isSelectedRow bool) string {
 	var b strings.Builder
 
-	for _, date := range d.dateRange {
-		if task.completions[date] {
-			b.WriteString(heatmapCompletedStyle.Render(completedSquare))
+	for i, date := range d.dateRange {
+		completed := task.completions[date]
+		var style lipgloss.Style
+		if completed {
+			style = heatmapCompletedStyle
 		} else {
-			b.WriteString(heatmapMissedStyle.Render(missedSquare))
+			style = heatmapMissedStyle
+		}
+		// Highlight selected cell on selected row
+		if isSelectedRow && i == d.selectedCell {
+			style = style.Underline(true)
+		}
+		if completed {
+			b.WriteString(style.Render(completedSquare))
+		} else {
+			b.WriteString(style.Render(missedSquare))
 		}
 	}
 
@@ -230,7 +280,7 @@ func (d *historyDelegate) Render(w io.Writer, m list.Model, index int, item list
 	}
 
 	// Render heatmap
-	heatmap := d.renderHeatmap(task)
+	heatmap := d.renderHeatmap(task, isSelected)
 
 	// Combine title and heatmap
 	content := title + strings.Repeat(" ", titleHeatmapGap) + heatmap
@@ -251,11 +301,13 @@ func (d *historyDelegate) Render(w io.Writer, m list.Model, index int, item list
 
 // HistoryPage displays historical task completion data.
 type HistoryPage struct {
-	list       list.Model
-	db         *sql.DB
-	width      int
-	height     int
-	daysToShow int
+	list         list.Model
+	delegate     *historyDelegate // direct reference for updating selection
+	db           *sql.DB
+	width        int
+	height       int
+	daysToShow   int
+	selectedCell int // 0 = leftmost (newest), daysToShow-1 = rightmost (oldest)
 }
 
 // NewHistoryPage creates and initializes the History page.
@@ -271,9 +323,11 @@ func NewHistoryPage(db *sql.DB) *HistoryPage {
 	l.SetShowStatusBar(false)
 
 	return &HistoryPage{
-		list:       l,
-		db:         db,
-		daysToShow: defaultDays,
+		list:         l,
+		delegate:     delegate,
+		db:           db,
+		daysToShow:   defaultDays,
+		selectedCell: 0,
 	}
 }
 
@@ -316,16 +370,62 @@ func (p *HistoryPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		cmds = append(cmds, p.list.NewStatusMessage(
 			fmt.Sprintf("load failed: %v", msg.err)))
 
+	case historyCompletionSavedMsg:
+		status := fmt.Sprintf("%s: marked incomplete", msg.date)
+		if msg.completed {
+			status = fmt.Sprintf("%s: marked completed", msg.date)
+		}
+		cmds = append(cmds, p.list.NewStatusMessage(status))
+
+	case historyCompletionSaveFailedMsg:
+		// Revert optimistic update
+		for i, listItem := range p.list.Items() {
+			task, ok := listItem.(HistoryTask)
+			if !ok || task.id != msg.taskID {
+				continue
+			}
+			task.completions[msg.date] = !msg.completed
+			p.list.SetItem(i, task)
+			break
+		}
+		cmds = append(cmds, p.list.NewStatusMessage(fmt.Sprintf("save failed: %v", msg.err)))
+
 	case tea.WindowSizeMsg:
 		// Recalculate days and reload if changed
 		newDays := calculateDaysToShow(msg.Width)
 		if newDays != p.daysToShow {
 			p.daysToShow = newDays
+			// Clamp selectedCell to new range
+			if p.selectedCell >= newDays {
+				p.selectedCell = newDays - 1
+			}
 			// Update delegate with new days
 			delegate := newHistoryDelegate(newDays)
+			delegate.selectedCell = p.selectedCell
+			p.delegate = delegate
 			p.list.SetDelegate(delegate)
 			// Reload data for new date range
 			cmds = append(cmds, loadHistoryDataCmd(p.db, p.daysToShow))
+		}
+
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "[":
+			if p.selectedCell > 0 {
+				p.selectedCell--
+				p.delegate.selectedCell = p.selectedCell
+			}
+			return p, nil // Consume key
+
+		case "]":
+			if p.selectedCell < p.daysToShow-1 {
+				p.selectedCell++
+				p.delegate.selectedCell = p.selectedCell
+			}
+			return p, nil // Consume key
+
+		case " ":
+			return p.handleSpaceToggle()
 		}
 	}
 
@@ -337,6 +437,35 @@ func (p *HistoryPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 	}
 
 	return p, tea.Batch(cmds...)
+}
+
+func (p *HistoryPage) handleSpaceToggle() (Page, tea.Cmd) {
+	idx := p.list.Index()
+	if idx < 0 || idx >= len(p.list.Items()) {
+		return p, nil
+	}
+
+	item, ok := p.list.Items()[idx].(HistoryTask)
+	if !ok {
+		return p, nil
+	}
+
+	if p.selectedCell < 0 || p.selectedCell >= len(p.delegate.dateRange) {
+		return p, nil
+	}
+	selectedDate := p.delegate.dateRange[p.selectedCell]
+
+	// Toggle completion state (optimistic UI update)
+	newCompleted := !item.completions[selectedDate]
+	item.completions[selectedDate] = newCompleted
+
+	// Update list item
+	setCmd := p.list.SetItem(idx, item)
+
+	// Persist to DB
+	saveCmd := saveHistoryCompletionCmd(p.db, item.id, selectedDate, newCompleted)
+
+	return p, tea.Batch(setCmd, saveCmd)
 }
 
 func (p *HistoryPage) View() string {
