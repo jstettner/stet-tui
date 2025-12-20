@@ -58,6 +58,7 @@ func (m AppModel) renderTitle() string {
 	t := m.activePage().Title()
 	return lipgloss.NewStyle().
 		Background(t.color).
+		Foreground(lipgloss.Color("#FFFFFF")).
 		Render(t.text)
 }
 
