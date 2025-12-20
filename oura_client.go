@@ -155,9 +155,12 @@ func (c *OuraClient) GetTodayHeartRate() ([]HeartRatePoint, error) {
 		return nil, fmt.Errorf("not authenticated")
 	}
 
-	today := time.Now().Format("2006-01-02")
-	url := fmt.Sprintf("%s/usercollection/heartrate?start_date=%s&end_date=%s",
-		ouraAPIBaseURL, today, today)
+	// Use start_datetime/end_datetime for heart rate (not start_date/end_date)
+	// Start from midnight today, end at current time
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	url := fmt.Sprintf("%s/usercollection/heartrate?start_datetime=%s&end_datetime=%s",
+		ouraAPIBaseURL, startOfDay.Format(time.RFC3339), now.Format(time.RFC3339))
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {

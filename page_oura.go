@@ -286,11 +286,11 @@ func (p *OuraPage) buildHeartRateTable() {
 	rows := make([]table.Row, 0, len(p.heartRate))
 	for i := len(p.heartRate) - 1; i >= 0; i-- {
 		hr := p.heartRate[i]
-		// Parse timestamp and format as HH:MM:SS
+		// Parse timestamp and format as HH:MM:SS in local time
 		t, err := time.Parse(time.RFC3339, hr.Timestamp)
 		timeStr := hr.Timestamp
 		if err == nil {
-			timeStr = t.Format("15:04:05")
+			timeStr = t.Local().Format("15:04:05")
 		}
 		rows = append(rows, table.Row{timeStr, fmt.Sprintf("%d", hr.BPM), hr.Source})
 	}
