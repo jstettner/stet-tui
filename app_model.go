@@ -62,10 +62,11 @@ type AppModel struct {
 }
 
 // NewAppModel creates and initializes the application model with all pages.
-func NewAppModel(db *sql.DB, ouraClient *OuraClient) AppModel {
+func NewAppModel(db *sql.DB, ouraClient *OuraClient, plantaClient *PlantaClient) AppModel {
 	pages := []Page{
 		NewTodayPage(db),
 		NewOuraPage(ouraClient),
+		NewPlantaPage(plantaClient),
 		NewHistoryPage(db),
 		NewTaskCfgPage(db),
 	}

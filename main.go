@@ -66,8 +66,11 @@ func main() {
 		os.Getenv("OURA_CLIENT_SECRET"),
 	)
 
+	// Initialize Planta client with app code from environment
+	plantaClient := NewPlantaClient(os.Getenv("PLANTA_APP_CODE"))
+
 	// Alt-screen makes this a true full-window TUI (no scrollback spam).
-	p := tea.NewProgram(NewAppModel(db, ouraClient), tea.WithAltScreen())
+	p := tea.NewProgram(NewAppModel(db, ouraClient, plantaClient), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Println("Error running program:", err)
 		os.Exit(1)
