@@ -306,7 +306,7 @@ type TaskCfgPage struct {
 // NewTaskCfgPage creates and initializes the Task Configuration page.
 func NewTaskCfgPage(db *sql.DB) *TaskCfgPage {
 	delegate := newTaskCfgDelegate()
-	l := list.New([]list.Item{}, delegate, 0, docStyle.GetHeight())
+	l := list.New([]list.Item{}, delegate, 0, 0)
 	l.Title = "Task Definitions"
 	l.SetShowHelp(true)
 
@@ -359,9 +359,11 @@ func (p *TaskCfgPage) SetSize(width, height int) {
 	p.width = width
 	p.height = height
 	contentWidth := max(width-docStyle.GetHorizontalFrameSize(), 0)
+	contentHeight := max(height-docStyle.GetVerticalFrameSize()-4, 0)
 	p.list.SetWidth(contentWidth)
-	p.titleInput.Width = contentWidth - 4
-	p.descInput.Width = contentWidth - 4
+	p.list.SetHeight(contentHeight)
+	p.titleInput.Width = max(contentWidth-4, 0)
+	p.descInput.Width = max(contentWidth-4, 0)
 }
 
 // InitCmd loads task definitions from database.

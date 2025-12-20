@@ -56,7 +56,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	p := tea.NewProgram(NewAppModel(db))
+	// Alt-screen makes this a true full-window TUI (no scrollback spam).
+	p := tea.NewProgram(NewAppModel(db), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Println("Error running program:", err)
 		os.Exit(1)

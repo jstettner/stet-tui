@@ -155,5 +155,14 @@ func (m AppModel) View() string {
 	}
 	b.WriteString(paginatorView)
 
-	return docStyle.Render(b.String())
+	// Size the outer container to exactly match the terminal window.
+	// This ensures we always render a full-height screen (no 20-row cap).
+	s := docStyle
+	if m.width > 0 {
+		s = s.Width(m.width)
+	}
+	if m.height > 0 {
+		s = s.Height(m.height)
+	}
+	return s.Render(b.String())
 }

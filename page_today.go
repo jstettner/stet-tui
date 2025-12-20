@@ -50,7 +50,6 @@ type taskCompletionSaveFailedMsg struct {
 	err       error
 }
 
-
 // saveTaskCompletionCmd persists the task completion state to the database.
 // If completed is true, inserts a row into task_history for today.
 // If completed is false, deletes the row for today.
@@ -282,7 +281,7 @@ type TodayPage struct {
 // NewTodayPage creates and initializes the Today page.
 func NewTodayPage(db *sql.DB) *TodayPage {
 	delegate := newTaskDelegate()
-	tasks := list.New([]list.Item{}, delegate, 0, docStyle.GetHeight())
+	tasks := list.New([]list.Item{}, delegate, 0, 0)
 	tasks.Title = "Hit List"
 
 	return &TodayPage{
@@ -303,9 +302,10 @@ func (p *TodayPage) Title() title {
 }
 
 func (p *TodayPage) SetSize(width, height int) {
-	// Account for docStyle margins when setting list width
+	// Account for docStyle padding and app chrome (title + paginator).
 	contentWidth := max(width-docStyle.GetHorizontalFrameSize(), 0)
 	p.tasks.SetWidth(contentWidth)
+	p.tasks.SetHeight(max(height-docStyle.GetVerticalFrameSize()-4, 0))
 }
 
 // InitCmd loads active tasks and today's completions from the database.
