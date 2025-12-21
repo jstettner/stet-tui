@@ -283,7 +283,7 @@ func (p *PlantaPage) View() string {
 		b.WriteString("2. Add to your .env file:\n")
 		b.WriteString("   PLANTA_APP_CODE=your_planta_app_code\n")
 		b.WriteString("3. Restart the app\n")
-		return b.String()
+		return lipgloss.NewStyle().Height(p.height).Render(b.String())
 	}
 
 	// Title
@@ -293,7 +293,7 @@ func (p *PlantaPage) View() string {
 	// Loading state
 	if p.loading && len(p.tasks) == 0 {
 		b.WriteString("Loading...\n")
-		return b.String()
+		return lipgloss.NewStyle().Height(p.height).Render(b.String())
 	}
 
 	// No tasks
@@ -395,7 +395,8 @@ func (p *PlantaPage) View() string {
 	}
 	b.WriteString(infoStyle.Render(strings.Join(statusParts, " | ")))
 
-	return b.String()
+	// Fill the available height so help/commands appear at the bottom
+	return lipgloss.NewStyle().Height(p.height).Render(b.String())
 }
 
 func (p *PlantaPage) KeyMap() []key.Binding {
