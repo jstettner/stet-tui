@@ -24,8 +24,10 @@ const dbPath = "$HOME/.local/share/stet/data.db"
 const logPath = "$HOME/.local/share/stet/debug.log"
 
 func main() {
-	// Load .env file (ignore error if not found)
-	_ = godotenv.Load()
+	// Load .env file from the binary's directory (ignore error if not found)
+	if exePath, err := os.Executable(); err == nil {
+		_ = godotenv.Load(filepath.Join(filepath.Dir(exePath), ".env"))
+	}
 
 	fileLogger := log.New(&lumberjack.Logger{
 		Filename:   os.ExpandEnv(logPath),
