@@ -63,6 +63,7 @@ type AppModel struct {
 func NewAppModel(db *sql.DB, ouraClient *clients.OuraClient, plantaClient *clients.PlantaClient) AppModel {
 	allPages := []pages.Page{
 		pages.NewTodayPage(db),
+		pages.NewJournalPage(db),
 		pages.NewOuraPage(ouraClient),
 		pages.NewPlantaPage(plantaClient),
 		pages.NewHistoryPage(db),
