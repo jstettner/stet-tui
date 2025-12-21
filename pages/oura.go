@@ -20,12 +20,12 @@ const ouraPollInterval = 20 * time.Second
 // Oura page message types
 type ouraTickMsg time.Time
 
-type ouraDataLoadedMsg struct {
+type OuraDataLoadedMsg struct {
 	readiness *clients.DailyReadiness
 	heartRate []clients.HeartRatePoint
 }
 
-type ouraDataFailedMsg struct {
+type OuraDataFailedMsg struct {
 	err error
 }
 
@@ -136,7 +136,7 @@ func (p *OuraPage) fetchDataCmd() tea.Cmd {
 	return func() tea.Msg {
 		readiness, err := p.client.GetTodayReadiness()
 		if err != nil {
-			return ouraDataFailedMsg{err: err}
+			return OuraDataFailedMsg{err: err}
 		}
 
 		heartRate, err := p.client.GetTodayHeartRate()
@@ -145,7 +145,7 @@ func (p *OuraPage) fetchDataCmd() tea.Cmd {
 			heartRate = nil
 		}
 
-		return ouraDataLoadedMsg{readiness: readiness, heartRate: heartRate}
+		return OuraDataLoadedMsg{readiness: readiness, heartRate: heartRate}
 	}
 }
 
@@ -182,7 +182,7 @@ func (p *OuraPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		p.loading = true
 		return p, tea.Batch(p.fetchDataCmd(), ouraTickCmd())
 
-	case ouraDataLoadedMsg:
+	case OuraDataLoadedMsg:
 		p.readiness = msg.readiness
 		p.heartRate = msg.heartRate
 		p.lastPoll = time.Now()
@@ -198,7 +198,7 @@ func (p *OuraPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		}
 		return p, nil
 
-	case ouraDataFailedMsg:
+	case OuraDataFailedMsg:
 		p.err = msg.err
 		p.loading = false
 		// Check if it's an auth error

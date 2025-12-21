@@ -295,6 +295,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var pageCmd tea.Cmd
 	m.pages[idx], pageCmd = m.pages[idx].Update(msg)
 
+	// for background tasks we should still forward them to their respective pages
+	switch msg := msg.(type) {
+	case pages.OuraDataLoadedMsg, pages.OuraDataFailedMsg:
+		m.pages[pages.OuraPageID].Update(msg)
+	case pages.PlantaDataLoadedMsg, pages.PlantaDataFailedMsg:
+		m.pages[pages.PlantaPageID].Update(msg)
+	}
+
 	var cmds []tea.Cmd
 	if paginatorCmd != nil {
 		cmds = append(cmds, paginatorCmd)

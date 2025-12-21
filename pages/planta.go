@@ -17,11 +17,11 @@ const plantaPollInterval = 4 * time.Hour
 // Planta page message types
 type plantaTickMsg time.Time
 
-type plantaDataLoadedMsg struct {
+type PlantaDataLoadedMsg struct {
 	tasks []clients.PlantTask
 }
 
-type plantaDataFailedMsg struct {
+type PlantaDataFailedMsg struct {
 	err error
 }
 
@@ -129,15 +129,15 @@ func (p *PlantaPage) fetchDataCmd() tea.Cmd {
 	return func() tea.Msg {
 		// Ensure authenticated (exchanges code if needed)
 		if err := p.client.EnsureAuthenticated(); err != nil {
-			return plantaDataFailedMsg{err: err}
+			return PlantaDataFailedMsg{err: err}
 		}
 
 		tasks, err := p.client.GetDueTasks(3) // Today + next 3 days
 		if err != nil {
-			return plantaDataFailedMsg{err: err}
+			return PlantaDataFailedMsg{err: err}
 		}
 
-		return plantaDataLoadedMsg{tasks: tasks}
+		return PlantaDataLoadedMsg{tasks: tasks}
 	}
 }
 
@@ -165,7 +165,7 @@ func (p *PlantaPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		p.loading = true
 		return p, tea.Batch(p.fetchDataCmd(), plantaTickCmd())
 
-	case plantaDataLoadedMsg:
+	case PlantaDataLoadedMsg:
 		p.tasks = msg.tasks
 		p.lastPoll = time.Now()
 		p.loading = false
@@ -176,7 +176,7 @@ func (p *PlantaPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		}
 		return p, nil
 
-	case plantaDataFailedMsg:
+	case PlantaDataFailedMsg:
 		p.err = msg.err
 		p.loading = false
 		if strings.Contains(msg.err.Error(), "missing PLANTA_APP_CODE") {
