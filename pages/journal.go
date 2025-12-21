@@ -18,8 +18,9 @@ const journalDebounceInterval = 500 * time.Millisecond
 type journalMode int
 
 const (
-	journalModeView journalMode = iota
-	journalModeEdit
+	journalModeView      journalMode = iota // Basic view, page nav works
+	journalModeVimNormal                    // Vim normal mode
+	journalModeVimInsert                    // Vim insert mode
 )
 
 // Message types for journal operations.
@@ -44,18 +45,33 @@ type journalDebounceTickMsg struct {
 
 // journalKeyMap defines key bindings for the Journal page.
 type journalKeyMap struct {
-	Edit   key.Binding
-	Escape key.Binding
+	VimMode key.Binding
+	Edit    key.Binding
+	Escape  key.Binding
+	Nav     key.Binding
+	Delete  key.Binding
 }
 
 var journalKeys = journalKeyMap{
+	VimMode: key.NewBinding(
+		key.WithKeys("ctrl+v"),
+		key.WithHelp("ctrl+v", "vim mode"),
+	),
 	Edit: key.NewBinding(
 		key.WithKeys("i"),
-		key.WithHelp("i", "edit"),
+		key.WithHelp("i", "insert"),
 	),
 	Escape: key.NewBinding(
 		key.WithKeys("esc"),
-		key.WithHelp("esc", "view"),
+		key.WithHelp("esc", "normal"),
+	),
+	Nav: key.NewBinding(
+		key.WithKeys("h", "j", "k", "l"),
+		key.WithHelp("hjkl", "navigate"),
+	),
+	Delete: key.NewBinding(
+		key.WithKeys("x", "d"),
+		key.WithHelp("x/dd", "delete"),
 	),
 }
 
@@ -69,6 +85,7 @@ type JournalPage struct {
 	debounceVersion  int
 	lastSavedContent string
 	pendingSave      bool
+	pendingKey       string // For multi-key sequences (gg, dd)
 
 	width  int
 	height int
@@ -116,14 +133,19 @@ func (p *JournalPage) InitCmd() tea.Cmd {
 }
 
 func (p *JournalPage) CapturesNavigation() bool {
-	return p.mode == journalModeEdit
+	return p.mode != journalModeView
 }
 
 func (p *JournalPage) KeyMap() []key.Binding {
-	if p.mode == journalModeEdit {
+	switch p.mode {
+	case journalModeView:
+		return []key.Binding{journalKeys.VimMode}
+	case journalModeVimNormal:
+		return []key.Binding{journalKeys.Nav, journalKeys.Edit, journalKeys.Delete, journalKeys.VimMode}
+	case journalModeVimInsert:
 		return []key.Binding{journalKeys.Escape}
 	}
-	return []key.Binding{journalKeys.Edit}
+	return nil
 }
 
 func (p *JournalPage) Update(msg tea.Msg) (Page, tea.Cmd) {
@@ -160,7 +182,8 @@ func (p *JournalPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		return p.handleKeyMsg(msg)
 	}
 
-	if p.mode == journalModeEdit {
+	// In insert mode, forward non-key messages to textarea
+	if p.mode == journalModeVimInsert {
 		var taCmd tea.Cmd
 		oldValue := p.textarea.Value()
 		p.textarea, taCmd = p.textarea.Update(msg)
@@ -184,42 +207,177 @@ func (p *JournalPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 func (p *JournalPage) handleKeyMsg(msg tea.KeyMsg) (Page, tea.Cmd) {
 	switch p.mode {
 	case journalModeView:
-		if msg.String() == "i" {
-			p.mode = journalModeEdit
-			p.textarea.Focus()
-			return p, textarea.Blink
-		}
+		return p.handleViewMode(msg)
+	case journalModeVimNormal:
+		return p.handleVimNormalMode(msg)
+	case journalModeVimInsert:
+		return p.handleVimInsertMode(msg)
+	}
+	return p, nil
+}
 
-	case journalModeEdit:
-		if msg.String() == "esc" {
-			p.mode = journalModeView
-			p.textarea.Blur()
+func (p *JournalPage) handleViewMode(msg tea.KeyMsg) (Page, tea.Cmd) {
+	if msg.String() == "ctrl+v" {
+		p.mode = journalModeVimNormal
+		p.textarea.Focus()
+		return p, textarea.Blink
+	}
+	return p, nil
+}
 
-			if p.textarea.Value() != p.lastSavedContent {
-				p.pendingSave = true
-				return p, saveJournalEntryCmd(p.db, p.entryID, p.textarea.Value())
-			}
+func (p *JournalPage) handleVimNormalMode(msg tea.KeyMsg) (Page, tea.Cmd) {
+	keyStr := msg.String()
+
+	// Handle multi-key sequences
+	if p.pendingKey == "g" {
+		p.pendingKey = ""
+		if keyStr == "g" {
+			// gg - go to start
+			p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyHome, Alt: true})
 			return p, nil
 		}
-
-		var taCmd tea.Cmd
-		oldValue := p.textarea.Value()
-		p.textarea, taCmd = p.textarea.Update(msg)
-
-		var cmds []tea.Cmd
-		if taCmd != nil {
-			cmds = append(cmds, taCmd)
+		// Invalid sequence, ignore
+		return p, nil
+	}
+	if p.pendingKey == "d" {
+		p.pendingKey = ""
+		if keyStr == "d" {
+			// dd - delete line
+			p.deleteLine()
+			return p, startDebounceCmd(p.debounceVersion)
 		}
+		// Invalid sequence, ignore
+		return p, nil
+	}
 
-		if p.textarea.Value() != oldValue {
-			p.debounceVersion++
-			cmds = append(cmds, startDebounceCmd(p.debounceVersion))
+	switch keyStr {
+	// Exit vim mode
+	case "ctrl+v":
+		p.mode = journalModeView
+		p.textarea.Blur()
+		// Save if modified
+		if p.textarea.Value() != p.lastSavedContent {
+			p.pendingSave = true
+			return p, saveJournalEntryCmd(p.db, p.entryID, p.textarea.Value())
 		}
+		return p, nil
 
-		return p, tea.Batch(cmds...)
+	// Navigation - update textarea synchronously
+	case "h":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyLeft})
+		return p, nil
+	case "j":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyDown})
+		return p, nil
+	case "k":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyUp})
+		return p, nil
+	case "l":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyRight})
+		return p, nil
+	case "w":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyRight, Alt: true})
+		return p, nil
+	case "b":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
+		return p, nil
+	case "0":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyHome})
+		return p, nil
+	case "$":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyEnd})
+		return p, nil
+	case "G":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyEnd, Alt: true})
+		return p, nil
+
+	// Multi-key sequence starters
+	case "g", "d":
+		p.pendingKey = keyStr
+		return p, nil
+
+	// Delete character
+	case "x":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyDelete})
+		p.debounceVersion++
+		return p, startDebounceCmd(p.debounceVersion)
+
+	// Mode entry - insert variants
+	case "i":
+		p.mode = journalModeVimInsert
+		return p, nil
+	case "I":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyHome})
+		p.mode = journalModeVimInsert
+		return p, nil
+	case "a":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyRight})
+		p.mode = journalModeVimInsert
+		return p, nil
+	case "A":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyEnd})
+		p.mode = journalModeVimInsert
+		return p, nil
+
+	// Open line
+	case "o":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyEnd})
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		p.mode = journalModeVimInsert
+		p.debounceVersion++
+		return p, startDebounceCmd(p.debounceVersion)
+	case "O":
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyHome})
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyUp})
+		p.mode = journalModeVimInsert
+		p.debounceVersion++
+		return p, startDebounceCmd(p.debounceVersion)
 	}
 
 	return p, nil
+}
+
+func (p *JournalPage) handleVimInsertMode(msg tea.KeyMsg) (Page, tea.Cmd) {
+	if msg.String() == "esc" {
+		p.mode = journalModeVimNormal
+		// Save if modified
+		if p.textarea.Value() != p.lastSavedContent {
+			p.pendingSave = true
+			return p, saveJournalEntryCmd(p.db, p.entryID, p.textarea.Value())
+		}
+		return p, nil
+	}
+
+	// Pass through to textarea
+	var taCmd tea.Cmd
+	oldValue := p.textarea.Value()
+	p.textarea, taCmd = p.textarea.Update(msg)
+
+	var cmds []tea.Cmd
+	if taCmd != nil {
+		cmds = append(cmds, taCmd)
+	}
+
+	if p.textarea.Value() != oldValue {
+		p.debounceVersion++
+		cmds = append(cmds, startDebounceCmd(p.debounceVersion))
+	}
+
+	return p, tea.Batch(cmds...)
+}
+
+// deleteLine deletes the current line (dd command)
+func (p *JournalPage) deleteLine() {
+	// Go to start of line
+	p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyHome})
+	// Delete before cursor (clears from start)
+	p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	// Delete after cursor (to end of line)
+	p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	// Delete the newline character if present
+	p.textarea, _ = p.textarea.Update(tea.KeyMsg{Type: tea.KeyDelete})
+	p.debounceVersion++
 }
 
 func (p *JournalPage) View() string {
@@ -233,10 +391,17 @@ func (p *JournalPage) View() string {
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render(today))
 	b.WriteString("\n")
 
-	if p.mode == journalModeEdit {
+	switch p.mode {
+	case journalModeView:
+		b.WriteString(modeStyle.Render("Press ctrl+v for vim mode"))
+	case journalModeVimNormal:
+		indicator := "-- NORMAL --"
+		if p.pendingKey != "" {
+			indicator = fmt.Sprintf("-- NORMAL -- (%s...)", p.pendingKey)
+		}
+		b.WriteString(modeStyle.Render(indicator))
+	case journalModeVimInsert:
 		b.WriteString(modeStyle.Render("-- INSERT --"))
-	} else {
-		b.WriteString(modeStyle.Render("Press 'i' to edit"))
 	}
 	b.WriteString("\n\n")
 
