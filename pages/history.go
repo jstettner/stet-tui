@@ -4,11 +4,13 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -28,6 +30,33 @@ type HistoryTask struct {
 func (t HistoryTask) FilterValue() string { return t.title }
 func (t HistoryTask) Title() string       { return t.title }
 func (t HistoryTask) Description() string { return "" }
+
+// ---------------------------------------------------------------------------
+// JournalEntry domain
+// ---------------------------------------------------------------------------
+
+// JournalEntry represents a journal entry with its date and content.
+type JournalEntry struct {
+	id        string
+	entryDate time.Time
+	content   string
+}
+
+func (j JournalEntry) FilterValue() string { return j.entryDate.Format("2006-01-02") }
+func (j JournalEntry) Title() string       { return j.entryDate.Format("2006-01-02") }
+func (j JournalEntry) Description() string { return "" }
+
+// ---------------------------------------------------------------------------
+// History mode
+// ---------------------------------------------------------------------------
+
+type historyMode int
+
+const (
+	historyModeTaskTable historyMode = iota
+	historyModeJournalTable
+	historyModeJournalPager
+)
 
 // ---------------------------------------------------------------------------
 // Messages
@@ -56,6 +85,16 @@ type historyCompletionSaveFailedMsg struct {
 	date      string
 	completed bool
 	err       error
+}
+
+// journalHistoryLoadedMsg contains all journal entries.
+type journalHistoryLoadedMsg struct {
+	entries []JournalEntry
+}
+
+// journalHistoryLoadFailedMsg indicates loading journal entries failed.
+type journalHistoryLoadFailedMsg struct {
+	err error
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +183,36 @@ func saveHistoryCompletionCmd(db *sql.DB, taskID, date string, completed bool) t
 			return historyCompletionSaveFailedMsg{taskID: taskID, date: date, completed: completed, err: err}
 		}
 		return historyCompletionSavedMsg{taskID: taskID, date: date, completed: completed}
+	}
+}
+
+func loadJournalHistoryCmd(db *sql.DB) tea.Cmd {
+	return func() tea.Msg {
+		rows, err := db.Query(`
+			SELECT id, entry_date, content
+			FROM journal_entries
+			ORDER BY entry_date DESC
+		`)
+		if err != nil {
+			return journalHistoryLoadFailedMsg{err: err}
+		}
+		defer rows.Close()
+
+		var entries []JournalEntry
+		for rows.Next() {
+			var e JournalEntry
+			var dateStr string
+			if err := rows.Scan(&e.id, &dateStr, &e.content); err != nil {
+				return journalHistoryLoadFailedMsg{err: err}
+			}
+			e.entryDate, _ = time.Parse("2006-01-02", dateStr)
+			entries = append(entries, e)
+		}
+		if err := rows.Err(); err != nil {
+			return journalHistoryLoadFailedMsg{err: err}
+		}
+
+		return journalHistoryLoadedMsg{entries: entries}
 	}
 }
 
@@ -297,14 +366,61 @@ func (d *historyDelegate) Render(w io.Writer, m list.Model, index int, item list
 }
 
 // ---------------------------------------------------------------------------
+// Journal delegate
+// ---------------------------------------------------------------------------
+
+// journalDelegate renders journal entries showing only the date.
+type journalDelegate struct {
+	list.DefaultDelegate
+}
+
+func newJournalDelegate() *journalDelegate {
+	d := &journalDelegate{
+		DefaultDelegate: list.NewDefaultDelegate(),
+	}
+	d.ShowDescription = false
+	d.SetHeight(1)
+	d.SetSpacing(0)
+	return d
+}
+
+func (d *journalDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	entry, ok := item.(JournalEntry)
+	if !ok {
+		return
+	}
+
+	if m.Width() <= 0 {
+		return
+	}
+
+	s := &d.Styles
+	isSelected := index == m.Index()
+
+	// Format: "2006-01-02"
+	dateStr := entry.entryDate.Format("2006-01-02")
+
+	if isSelected {
+		dateStr = s.SelectedTitle.Render(dateStr)
+	} else {
+		dateStr = s.NormalTitle.Render(dateStr)
+	}
+
+	fmt.Fprint(w, dateStr)
+}
+
+// ---------------------------------------------------------------------------
 // HistoryPage
 // ---------------------------------------------------------------------------
 
 // historyKeyMap defines key bindings for the History page.
 type historyKeyMap struct {
-	Earlier key.Binding
-	Later   key.Binding
-	Toggle  key.Binding
+	Earlier     key.Binding
+	Later       key.Binding
+	Toggle      key.Binding
+	SwitchTable key.Binding
+	Enter       key.Binding
+	Back        key.Binding
 }
 
 var historyKeys = historyKeyMap{
@@ -320,6 +436,18 @@ var historyKeys = historyKeyMap{
 		key.WithKeys(" "),
 		key.WithHelp("space", "toggle"),
 	),
+	SwitchTable: key.NewBinding(
+		key.WithKeys("tab"),
+		key.WithHelp("tab", "switch table"),
+	),
+	Enter: key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "view entries"),
+	),
+	Back: key.NewBinding(
+		key.WithKeys("esc", "q"),
+		key.WithHelp("esc/q", "back"),
+	),
 }
 
 // HistoryPage displays historical task completion data.
@@ -331,6 +459,15 @@ type HistoryPage struct {
 	height       int
 	daysToShow   int
 	selectedCell int // 0 = leftmost (newest), daysToShow-1 = rightmost (oldest)
+
+	// Journal history fields
+	mode            historyMode
+	journalList     list.Model
+	journalEntries  []JournalEntry
+	thisYearEntry   string
+	lastYearEntry   string
+	threeYearsEntry string
+	viewport        viewport.Model
 }
 
 // NewHistoryPage creates and initializes the History page.
@@ -345,12 +482,22 @@ func NewHistoryPage(db *sql.DB) *HistoryPage {
 	l.SetFilteringEnabled(false)
 	l.SetShowStatusBar(false)
 
+	// Initialize journal list
+	journalDelegate := newJournalDelegate()
+	jl := list.New([]list.Item{}, journalDelegate, 0, 0)
+	jl.Title = "Journal History"
+	jl.SetShowHelp(false)
+	jl.SetFilteringEnabled(false)
+	jl.SetShowStatusBar(false)
+
 	return &HistoryPage{
 		list:         l,
 		delegate:     delegate,
 		db:           db,
 		daysToShow:   defaultDays,
 		selectedCell: 0,
+		mode:         historyModeTaskTable,
+		journalList:  jl,
 	}
 }
 
@@ -370,12 +517,45 @@ func (p *HistoryPage) SetSize(width, height int) {
 	p.height = height
 
 	contentWidth := max(width-DocStyle.GetHorizontalFrameSize(), 0)
+
+	// Calculate heights for each section
+	taskHeight, journalHeight := p.calculateHeights()
+
 	p.list.SetWidth(contentWidth)
-	p.list.SetHeight(height)
+	p.list.SetHeight(taskHeight)
+
+	p.journalList.SetWidth(contentWidth)
+	p.journalList.SetHeight(journalHeight)
+
+	// Update viewport for pager mode
+	p.viewport.Width = contentWidth
+	p.viewport.Height = height - 4 // -4 for header and scroll indicator
+}
+
+func (p *HistoryPage) calculateHeights() (taskHeight, journalHeight int) {
+	// Journal table gets fixed 5 rows + 2 for title/padding
+	journalHeight = 7
+
+	// Comparison boxes: 3 boxes × 4 lines each = 12
+	boxesHeight := 12
+
+	// Overhead: divider (2 lines with newlines) + newlines between sections
+	overhead := 4
+
+	// Task table gets all remaining space
+	taskHeight = p.height - journalHeight - boxesHeight - overhead
+	if taskHeight < 5 {
+		taskHeight = 5
+	}
+
+	return
 }
 
 func (p *HistoryPage) InitCmd() tea.Cmd {
-	return loadHistoryDataCmd(p.db, p.daysToShow)
+	return tea.Batch(
+		loadHistoryDataCmd(p.db, p.daysToShow),
+		loadJournalHistoryCmd(p.db),
+	)
 }
 
 func (p *HistoryPage) Update(msg tea.Msg) (Page, tea.Cmd) {
@@ -413,6 +593,21 @@ func (p *HistoryPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		}
 		cmds = append(cmds, p.list.NewStatusMessage(fmt.Sprintf("save failed: %v", msg.err)))
 
+	case journalHistoryLoadedMsg:
+		p.journalEntries = msg.entries
+		items := make([]list.Item, len(msg.entries))
+		for i, e := range msg.entries {
+			items[i] = e
+		}
+		p.journalList.SetItems(items)
+		if len(items) > 0 {
+			p.updateComparisonBoxes()
+		}
+
+	case journalHistoryLoadFailedMsg:
+		cmds = append(cmds, p.journalList.NewStatusMessage(
+			fmt.Sprintf("journal load failed: %v", msg.err)))
+
 	case tea.WindowSizeMsg:
 		// Recalculate days and reload if changed
 		newDays := calculateDaysToShow(msg.Width)
@@ -432,34 +627,117 @@ func (p *HistoryPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, historyKeys.Earlier):
-			if p.selectedCell > 0 {
-				p.selectedCell--
-				p.delegate.selectedCell = p.selectedCell
-			}
-			return p, nil // Consume key
-
-		case key.Matches(msg, historyKeys.Later):
-			if p.selectedCell < p.daysToShow-1 {
-				p.selectedCell++
-				p.delegate.selectedCell = p.selectedCell
-			}
-			return p, nil // Consume key
-
-		case key.Matches(msg, historyKeys.Toggle):
-			return p.handleSpaceToggle()
+		// Mode-specific key handling
+		switch p.mode {
+		case historyModeJournalPager:
+			return p.handlePagerKeys(msg)
+		case historyModeJournalTable:
+			return p.handleJournalTableKeys(msg)
+		default:
+			return p.handleTaskTableKeys(msg)
 		}
 	}
 
-	// Let list handle navigation
+	// Let appropriate list handle navigation based on mode
 	var listCmd tea.Cmd
-	p.list, listCmd = p.list.Update(msg)
+	switch p.mode {
+	case historyModeJournalTable:
+		prevIndex := p.journalList.Index()
+		p.journalList, listCmd = p.journalList.Update(msg)
+		if p.journalList.Index() != prevIndex {
+			p.updateComparisonBoxes()
+		}
+	case historyModeJournalPager:
+		p.viewport, listCmd = p.viewport.Update(msg)
+	default:
+		p.list, listCmd = p.list.Update(msg)
+	}
 	if listCmd != nil {
 		cmds = append(cmds, listCmd)
 	}
 
 	return p, tea.Batch(cmds...)
+}
+
+func (p *HistoryPage) handleTaskTableKeys(msg tea.KeyMsg) (Page, tea.Cmd) {
+	switch {
+	case key.Matches(msg, historyKeys.Earlier):
+		if p.selectedCell > 0 {
+			p.selectedCell--
+			p.delegate.selectedCell = p.selectedCell
+		}
+		return p, nil
+
+	case key.Matches(msg, historyKeys.Later):
+		if p.selectedCell < p.daysToShow-1 {
+			p.selectedCell++
+			p.delegate.selectedCell = p.selectedCell
+		}
+		return p, nil
+
+	case key.Matches(msg, historyKeys.Toggle):
+		return p.handleSpaceToggle()
+
+	case key.Matches(msg, historyKeys.SwitchTable):
+		p.mode = historyModeJournalTable
+		return p, nil
+	}
+
+	// Check for j/down at last item to switch to journal list
+	if msg.String() == "j" || msg.String() == "down" {
+		if p.list.Index() == len(p.list.Items())-1 {
+			p.mode = historyModeJournalTable
+			return p, nil
+		}
+	}
+
+	// Let list handle other navigation
+	var listCmd tea.Cmd
+	p.list, listCmd = p.list.Update(msg)
+	return p, listCmd
+}
+
+func (p *HistoryPage) handleJournalTableKeys(msg tea.KeyMsg) (Page, tea.Cmd) {
+	switch {
+	case key.Matches(msg, historyKeys.SwitchTable):
+		p.mode = historyModeTaskTable
+		return p, nil
+
+	case key.Matches(msg, historyKeys.Enter):
+		if len(p.journalList.Items()) > 0 {
+			p.openPagerView()
+		}
+		return p, nil
+	}
+
+	// Check for k/up at first item to switch to task list
+	if msg.String() == "k" || msg.String() == "up" {
+		if p.journalList.Index() == 0 {
+			p.mode = historyModeTaskTable
+			return p, nil
+		}
+	}
+
+	// Let journal list handle navigation
+	var listCmd tea.Cmd
+	prevIndex := p.journalList.Index()
+	p.journalList, listCmd = p.journalList.Update(msg)
+	if p.journalList.Index() != prevIndex {
+		p.updateComparisonBoxes()
+	}
+	return p, listCmd
+}
+
+func (p *HistoryPage) handlePagerKeys(msg tea.KeyMsg) (Page, tea.Cmd) {
+	if key.Matches(msg, historyKeys.Back) {
+		p.mode = historyModeJournalTable
+		return p, nil
+	}
+
+	// Let viewport handle navigation
+	var cmd tea.Cmd
+	p.viewport, cmd = p.viewport.Update(msg)
+	return p, cmd
 }
 
 func (p *HistoryPage) handleSpaceToggle() (Page, tea.Cmd) {
@@ -491,14 +769,270 @@ func (p *HistoryPage) handleSpaceToggle() (Page, tea.Cmd) {
 	return p, tea.Batch(setCmd, saveCmd)
 }
 
+// ---------------------------------------------------------------------------
+// Journal comparison boxes
+// ---------------------------------------------------------------------------
+
+func (p *HistoryPage) getSelectedJournalDate() time.Time {
+	idx := p.journalList.Index()
+	if idx < 0 || idx >= len(p.journalEntries) {
+		return time.Now()
+	}
+	return p.journalEntries[idx].entryDate
+}
+
+func (p *HistoryPage) updateComparisonBoxes() {
+	selectedDate := p.getSelectedJournalDate()
+
+	// Clear existing
+	p.thisYearEntry = ""
+	p.lastYearEntry = ""
+	p.threeYearsEntry = ""
+
+	thisYear := selectedDate.Year()
+	lastYear := thisYear - 1
+	threeYearsAgo := thisYear - 3
+
+	month := selectedDate.Month()
+	day := selectedDate.Day()
+
+	for _, entry := range p.journalEntries {
+		if entry.entryDate.Month() == month && entry.entryDate.Day() == day {
+			switch entry.entryDate.Year() {
+			case thisYear:
+				p.thisYearEntry = entry.content
+			case lastYear:
+				p.lastYearEntry = entry.content
+			case threeYearsAgo:
+				p.threeYearsEntry = entry.content
+			}
+		}
+	}
+}
+
+func (p *HistoryPage) renderComparisonBoxes() string {
+	selectedDate := p.getSelectedJournalDate()
+	thisYear := selectedDate.Year()
+
+	boxWidth := p.width - DocStyle.GetHorizontalFrameSize() - 4
+	if boxWidth < 20 {
+		boxWidth = 20
+	}
+
+	// Fixed small height - just 2 lines of content
+	boxHeight := 4 // 2 lines content + 2 for border
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#555555")).
+		Width(boxWidth).
+		Height(boxHeight)
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#888888"))
+
+	noEntryStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#555555")).
+		Italic(true)
+
+	boxes := []struct {
+		title   string
+		content string
+	}{
+		{fmt.Sprintf("This Year (%d)", thisYear), p.thisYearEntry},
+		{fmt.Sprintf("Last Year (%d)", thisYear-1), p.lastYearEntry},
+		{fmt.Sprintf("3 Years Ago (%d)", thisYear-3), p.threeYearsEntry},
+	}
+
+	var renderedBoxes []string
+	for _, box := range boxes {
+		content := box.content
+		if content == "" {
+			content = noEntryStyle.Render("No entry")
+		} else {
+			content = truncateContent(content, boxWidth-2, 2)
+		}
+
+		boxContent := titleStyle.Render(box.title) + "\n" + content
+		renderedBoxes = append(renderedBoxes, boxStyle.Render(boxContent))
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, renderedBoxes...)
+}
+
+func truncateContent(content string, width, maxLines int) string {
+	lines := strings.Split(content, "\n")
+	var result []string
+	for i, line := range lines {
+		if i >= maxLines {
+			break
+		}
+		if len(line) > width {
+			result = append(result, line[:width-3]+"...")
+		} else {
+			result = append(result, line)
+		}
+	}
+	if len(lines) > maxLines && len(result) > 0 {
+		result[len(result)-1] = "..."
+	}
+	return strings.Join(result, "\n")
+}
+
+// ---------------------------------------------------------------------------
+// Pager view
+// ---------------------------------------------------------------------------
+
+func (p *HistoryPage) openPagerView() {
+	p.mode = historyModeJournalPager
+
+	contentWidth := p.width - DocStyle.GetHorizontalFrameSize()
+	contentHeight := p.height - 4
+
+	p.viewport = viewport.New(contentWidth, contentHeight)
+	p.viewport.SetContent(p.buildPagerContent())
+	p.viewport.GotoTop()
+}
+
+func (p *HistoryPage) buildPagerContent() string {
+	selectedDate := p.getSelectedJournalDate()
+	dayMonth := selectedDate.Format("January 2")
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#04B575"))
+
+	dividerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#555555"))
+
+	// Collect all entries for this day/month across all years
+	type yearEntry struct {
+		year    int
+		content string
+	}
+	var entries []yearEntry
+
+	for _, entry := range p.journalEntries {
+		if entry.entryDate.Month() == selectedDate.Month() &&
+			entry.entryDate.Day() == selectedDate.Day() {
+			entries = append(entries, yearEntry{
+				year:    entry.entryDate.Year(),
+				content: entry.content,
+			})
+		}
+	}
+
+	// Sort by year descending (newest first)
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].year > entries[j].year
+	})
+
+	if len(entries) == 0 {
+		return "No journal entries for " + dayMonth
+	}
+
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(fmt.Sprintf("Journal Entries for %s", dayMonth)))
+	b.WriteString("\n\n")
+
+	for i, entry := range entries {
+		if i > 0 {
+			b.WriteString("\n")
+			b.WriteString(dividerStyle.Render(strings.Repeat("─", 40)))
+			b.WriteString("\n\n")
+		}
+
+		b.WriteString(titleStyle.Render(fmt.Sprintf("%d", entry.year)))
+		b.WriteString("\n\n")
+		b.WriteString(entry.content)
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+func (p *HistoryPage) viewPager() string {
+	var b strings.Builder
+
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#04B575"))
+
+	hintStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#555555"))
+
+	b.WriteString(headerStyle.Render("Journal Entry Viewer"))
+	b.WriteString(" ")
+	b.WriteString(hintStyle.Render("(press esc or q to return)"))
+	b.WriteString("\n\n")
+
+	b.WriteString(p.viewport.View())
+
+	// Scroll indicator
+	scrollPercent := int(p.viewport.ScrollPercent() * 100)
+	scrollStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+	b.WriteString("\n")
+	b.WriteString(scrollStyle.Render(fmt.Sprintf("%d%%", scrollPercent)))
+
+	return b.String()
+}
+
+// ---------------------------------------------------------------------------
+// View and KeyMap
+// ---------------------------------------------------------------------------
+
 func (p *HistoryPage) View() string {
-	return p.list.View()
+	if p.mode == historyModeJournalPager {
+		return p.viewPager()
+	}
+
+	var b strings.Builder
+
+	// Task history table
+	b.WriteString(p.list.View())
+	b.WriteString("\n")
+
+	// Section divider
+	dividerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#444444"))
+	contentWidth := p.width - DocStyle.GetHorizontalFrameSize()
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", contentWidth)))
+	b.WriteString("\n")
+
+	// Journal list (title rendered by list component)
+	b.WriteString(p.journalList.View())
+	b.WriteString("\n")
+
+	// Comparison boxes
+	if len(p.journalEntries) > 0 {
+		b.WriteString(p.renderComparisonBoxes())
+	}
+
+	return b.String()
 }
 
 func (p *HistoryPage) KeyMap() []key.Binding {
-	return []key.Binding{
-		historyKeys.Earlier,
-		historyKeys.Later,
-		historyKeys.Toggle,
+	switch p.mode {
+	case historyModeJournalPager:
+		return []key.Binding{
+			historyKeys.Back,
+		}
+	case historyModeJournalTable:
+		return []key.Binding{
+			historyKeys.SwitchTable,
+			historyKeys.Enter,
+		}
+	default:
+		return []key.Binding{
+			historyKeys.Earlier,
+			historyKeys.Later,
+			historyKeys.Toggle,
+			historyKeys.SwitchTable,
+		}
 	}
+}
+
+// CapturesNavigation implements NavigationCapturer to prevent page switching in pager mode.
+func (p *HistoryPage) CapturesNavigation() bool {
+	return p.mode == historyModeJournalPager
 }
