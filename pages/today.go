@@ -1,4 +1,4 @@
-package main
+package pages
 
 import (
 	"database/sql"
@@ -308,15 +308,15 @@ func (p *TodayPage) ID() PageID {
 	return TodayPageID
 }
 
-func (p *TodayPage) Title() title {
-	return title{
-		text:  "Today",
-		color: lipgloss.Color("#04B575"),
+func (p *TodayPage) Title() Title {
+	return Title{
+		Text:  "Today",
+		Color: lipgloss.Color("#04B575"),
 	}
 }
 
 func (p *TodayPage) SetSize(width, height int) {
-	contentWidth := max(width-docStyle.GetHorizontalFrameSize(), 0)
+	contentWidth := max(width-DocStyle.GetHorizontalFrameSize(), 0)
 	p.tasks.SetWidth(contentWidth)
 	p.tasks.SetHeight(height)
 }

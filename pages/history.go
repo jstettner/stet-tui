@@ -1,4 +1,4 @@
-package main
+package pages
 
 import (
 	"database/sql"
@@ -160,8 +160,8 @@ const (
 )
 
 func calculateDaysToShow(terminalWidth int) int {
-	// Available width after accounting for docStyle margins
-	contentWidth := terminalWidth - docStyle.GetHorizontalFrameSize()
+	// Available width after accounting for DocStyle margins
+	contentWidth := terminalWidth - DocStyle.GetHorizontalFrameSize()
 
 	// Width available for heatmap (each square = 1 character)
 	heatmapWidth := contentWidth - minTitleWidth - titleHeatmapGap - histListPadding
@@ -358,10 +358,10 @@ func (p *HistoryPage) ID() PageID {
 	return HistoryPageID
 }
 
-func (p *HistoryPage) Title() title {
-	return title{
-		text:  "History",
-		color: lipgloss.Color("12"),
+func (p *HistoryPage) Title() Title {
+	return Title{
+		Text:  "History",
+		Color: lipgloss.Color("12"),
 	}
 }
 
@@ -369,7 +369,7 @@ func (p *HistoryPage) SetSize(width, height int) {
 	p.width = width
 	p.height = height
 
-	contentWidth := max(width-docStyle.GetHorizontalFrameSize(), 0)
+	contentWidth := max(width-DocStyle.GetHorizontalFrameSize(), 0)
 	p.list.SetWidth(contentWidth)
 	p.list.SetHeight(height)
 }

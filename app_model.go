@@ -4,17 +4,15 @@ import (
 	"database/sql"
 	"strings"
 
+	"stet.codes/tui/clients"
+	"stet.codes/tui/pages"
+
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/paginator"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
-
-// pageInitializer is an optional interface for pages that need async initialization.
-type pageInitializer interface {
-	InitCmd() tea.Cmd
-}
 
 // Styles for dim page titles in the navigation indicator.
 var (
@@ -53,40 +51,40 @@ var globalKeys = globalKeyMap{
 
 // AppModel is the root Bubble Tea model that manages pages and global state.
 type AppModel struct {
-	pages       []Page
+	pages       []pages.Page
 	paginator   paginator.Model
 	help        help.Model
-	initialized map[PageID]bool
+	initialized map[pages.PageID]bool
 	width       int
 	height      int
 }
 
 // NewAppModel creates and initializes the application model with all pages.
-func NewAppModel(db *sql.DB, ouraClient *OuraClient, plantaClient *PlantaClient) AppModel {
-	pages := []Page{
-		NewTodayPage(db),
-		NewOuraPage(ouraClient),
-		NewPlantaPage(plantaClient),
-		NewHistoryPage(db),
-		NewTaskCfgPage(db),
+func NewAppModel(db *sql.DB, ouraClient *clients.OuraClient, plantaClient *clients.PlantaClient) AppModel {
+	allPages := []pages.Page{
+		pages.NewTodayPage(db),
+		pages.NewOuraPage(ouraClient),
+		pages.NewPlantaPage(plantaClient),
+		pages.NewHistoryPage(db),
+		pages.NewTaskCfgPage(db),
 	}
 
-	p := paginator.New()
-	p.Type = paginator.Dots
-	p.ActiveDot = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "235", Dark: "252"}).Render("•")
-	p.InactiveDot = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "250", Dark: "238"}).Render("•")
-	p.SetTotalPages(len(pages))
+	pag := paginator.New()
+	pag.Type = paginator.Dots
+	pag.ActiveDot = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "235", Dark: "252"}).Render("•")
+	pag.InactiveDot = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "250", Dark: "238"}).Render("•")
+	pag.SetTotalPages(len(allPages))
 
 	return AppModel{
-		pages:       pages,
-		paginator:   p,
+		pages:       allPages,
+		paginator:   pag,
 		help:        help.New(),
-		initialized: make(map[PageID]bool),
+		initialized: make(map[pages.PageID]bool),
 	}
 }
 
 // activePage returns the currently active page.
-func (m AppModel) activePage() Page {
+func (m AppModel) activePage() pages.Page {
 	idx := m.paginator.Page
 	if idx < 0 || idx >= len(m.pages) {
 		panic("invalid page index")
@@ -160,13 +158,13 @@ func (m AppModel) renderTitle() string {
 		case 0:
 			// Current page: full color
 			styled = lipgloss.NewStyle().
-				Background(t.color).
+				Background(t.Color).
 				Foreground(lipgloss.Color("#FFFFFF")).
-				Render(t.text)
+				Render(t.Text)
 		case 1:
-			styled = dimStyle1.Render(t.text)
+			styled = dimStyle1.Render(t.Text)
 		default:
-			styled = dimStyle2.Render(t.text)
+			styled = dimStyle2.Render(t.Text)
 		}
 		titles[i] = styled
 	}
@@ -217,9 +215,9 @@ func (k combinedKeyMap) FullHelp() [][]key.Binding {
 }
 
 func (m AppModel) Init() tea.Cmd {
-	// Initialize the active page if it implements pageInitializer
+	// Initialize the active page if it implements PageInitializer
 	page := m.activePage()
-	if pi, ok := page.(pageInitializer); ok {
+	if pi, ok := page.(pages.PageInitializer); ok {
 		m.initialized[page.ID()] = true
 		return pi.InitCmd()
 	}
@@ -240,8 +238,8 @@ func (m AppModel) contentHeight() int {
 		return 0
 	}
 	// Layout: title(1) + \n\n(2) + content + \n\n(2) + help + \n\n(2) + paginator(1)
-	// Plus docStyle vertical frame
-	chrome := 1 + 2 + 2 + m.helpHeight() + 2 + 1 + docStyle.GetVerticalFrameSize()
+	// Plus DocStyle vertical frame
+	chrome := 1 + 2 + 2 + m.helpHeight() + 2 + 1 + pages.DocStyle.GetVerticalFrameSize()
 	return max(m.height-chrome, 0)
 }
 
@@ -261,9 +259,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updatePageSizes()
 		return m, nil
 
-	case InvalidateTodayPageMsg:
+	case pages.InvalidateTodayPageMsg:
 		// Reset Today page's initialized state so it refetches on next view
-		delete(m.initialized, TodayPageID)
+		delete(m.initialized, pages.TodayPageID)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -282,7 +280,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Check if active page captures navigation keys (e.g., text input mode)
 	capturesNav := false
-	if nc, ok := m.activePage().(navigationCapturer); ok {
+	if nc, ok := m.activePage().(pages.NavigationCapturer); ok {
 		capturesNav = nc.CapturesNavigation()
 	}
 
@@ -308,7 +306,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// If page changed, initialize the new page if it hasn't been initialized yet
 	if idx != prevPage {
 		page := m.pages[idx]
-		if pi, ok := page.(pageInitializer); ok && !m.initialized[page.ID()] {
+		if pi, ok := page.(pages.PageInitializer); ok && !m.initialized[page.ID()] {
 			m.initialized[page.ID()] = true
 			cmds = append(cmds, pi.InitCmd())
 		}
@@ -330,7 +328,7 @@ func (m AppModel) View() string {
 
 	// View help
 	if m.width > 0 {
-		contentWidth := max(m.width-docStyle.GetHorizontalFrameSize(), 0)
+		contentWidth := max(m.width-pages.DocStyle.GetHorizontalFrameSize(), 0)
 		if contentWidth > 0 {
 			m.help.Width = contentWidth
 		}
@@ -342,7 +340,7 @@ func (m AppModel) View() string {
 	// View tab indicator (paginator)
 	paginatorView := m.paginator.View()
 	if m.width > 0 {
-		contentWidth := max(m.width-docStyle.GetHorizontalFrameSize(), 0)
+		contentWidth := max(m.width-pages.DocStyle.GetHorizontalFrameSize(), 0)
 		if contentWidth > 0 {
 			paginatorView = lipgloss.PlaceHorizontal(contentWidth, lipgloss.Center, paginatorView)
 		}
@@ -351,7 +349,7 @@ func (m AppModel) View() string {
 
 	// Size the outer container to exactly match the terminal window.
 	// This ensures we always render a full-height screen (no 20-row cap).
-	s := docStyle
+	s := pages.DocStyle
 	if m.width > 0 {
 		s = s.Width(m.width)
 	}

@@ -1,4 +1,4 @@
-package main
+package pages
 
 import (
 	"database/sql"
@@ -401,17 +401,17 @@ func (p *TaskCfgPage) CapturesNavigation() bool {
 	return p.mode != taskCfgModeList
 }
 
-func (p *TaskCfgPage) Title() title {
-	return title{
-		text:  "Configure",
-		color: lipgloss.Color("#FF6B6B"),
+func (p *TaskCfgPage) Title() Title {
+	return Title{
+		Text:  "Configure",
+		Color: lipgloss.Color("#FF6B6B"),
 	}
 }
 
 func (p *TaskCfgPage) SetSize(width, height int) {
 	p.width = width
 	p.height = height
-	contentWidth := max(width-docStyle.GetHorizontalFrameSize(), 0)
+	contentWidth := max(width-DocStyle.GetHorizontalFrameSize(), 0)
 	p.list.SetWidth(contentWidth)
 	p.list.SetHeight(height)
 	p.titleInput.Width = max(contentWidth-4, 0)

@@ -1,10 +1,18 @@
-package main
+package pages
 
 import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// DocStyle is the shared outer frame style for content areas.
+var DocStyle = lipgloss.NewStyle().Padding(1, 2)
+
+// PageInitializer is an optional interface for pages that need async initialization.
+type PageInitializer interface {
+	InitCmd() tea.Cmd
+}
 
 // PageID identifies each page/view in the application.
 type PageID int
@@ -18,15 +26,15 @@ const (
 	pageCount
 )
 
-// title holds the display text and color for a page's header.
-type title struct {
-	text  string
-	color lipgloss.Color
+// Title holds the display text and color for a page's header.
+type Title struct {
+	Text  string
+	Color lipgloss.Color
 }
 
-// navigationCapturer is an optional interface for pages that need to capture
+// NavigationCapturer is an optional interface for pages that need to capture
 // navigation keys (left/right arrows) in certain modes (e.g., text input).
-type navigationCapturer interface {
+type NavigationCapturer interface {
 	CapturesNavigation() bool
 }
 
@@ -37,7 +45,7 @@ type Page interface {
 	ID() PageID
 
 	// Title returns the page's header title configuration.
-	Title() title
+	Title() Title
 
 	// SetSize is called when the window resizes so the page can adjust its layout.
 	SetSize(width, height int)

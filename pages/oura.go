@@ -1,10 +1,12 @@
-package main
+package pages
 
 import (
 	"context"
 	"fmt"
 	"strings"
 	"time"
+
+	"stet.codes/tui/clients"
 
 	"github.com/NimbleMarkets/ntcharts/linechart/timeserieslinechart"
 	"github.com/charmbracelet/bubbles/key"
@@ -19,8 +21,8 @@ const ouraPollInterval = 20 * time.Second
 type ouraTickMsg time.Time
 
 type ouraDataLoadedMsg struct {
-	readiness *DailyReadiness
-	heartRate []HeartRatePoint
+	readiness *clients.DailyReadiness
+	heartRate []clients.HeartRatePoint
 }
 
 type ouraDataFailedMsg struct {
@@ -28,7 +30,7 @@ type ouraDataFailedMsg struct {
 }
 
 type ouraAuthCompleteMsg struct {
-	tokens *OuraTokens
+	tokens *clients.OuraTokens
 }
 
 type ouraAuthFailedMsg struct {
@@ -57,9 +59,9 @@ var hrHighlightStyle = lipgloss.NewStyle().Background(lipgloss.Color("#444444"))
 
 // OuraPage displays Oura health data.
 type OuraPage struct {
-	client       *OuraClient
-	readiness    *DailyReadiness
-	heartRate    []HeartRatePoint
+	client       *clients.OuraClient
+	readiness    *clients.DailyReadiness
+	heartRate    []clients.HeartRatePoint
 	hrChart      timeserieslinechart.Model
 	hrTable      table.Model
 	selectedTime time.Time // timestamp of the currently selected heart rate point
@@ -75,7 +77,7 @@ type OuraPage struct {
 }
 
 // NewOuraPage creates and initializes the Oura page.
-func NewOuraPage(client *OuraClient) *OuraPage {
+func NewOuraPage(client *clients.OuraClient) *OuraPage {
 	needsAuth := !client.Auth().HasCredentials() || !client.IsAuthenticated()
 	return &OuraPage{
 		client:    client,
@@ -88,10 +90,10 @@ func (p *OuraPage) ID() PageID {
 	return OuraPageID
 }
 
-func (p *OuraPage) Title() title {
-	return title{
-		text:  "Oura",
-		color: lipgloss.Color("#8B5CF6"), // Purple for Oura
+func (p *OuraPage) Title() Title {
+	return Title{
+		Text:  "Oura",
+		Color: lipgloss.Color("#8B5CF6"), // Purple for Oura
 	}
 }
 
@@ -255,7 +257,7 @@ func (p *OuraPage) Update(msg tea.Msg) (Page, tea.Cmd) {
 
 // buildHeartRateChart creates the heart rate chart from the data.
 func (p *OuraPage) buildHeartRateChart() {
-	chartWidth := max(p.width-docStyle.GetHorizontalFrameSize()-4, 40)
+	chartWidth := max(p.width-DocStyle.GetHorizontalFrameSize()-4, 40)
 	chartHeight := 8
 
 	p.hrChart = timeserieslinechart.New(chartWidth, chartHeight)
@@ -310,7 +312,7 @@ func (p *OuraPage) buildHeartRateTable() {
 	// Calculate available height for the table
 	// Account for: title(2) + score(2) + contributors header+grid(5) +
 	// hr chart section(11) + "Recent Samples" header(1) + status(2) + padding
-	fixedContentHeight := 23 + docStyle.GetVerticalFrameSize()
+	fixedContentHeight := 23 + DocStyle.GetVerticalFrameSize()
 	tableHeight := max(p.height-fixedContentHeight, 5) // minimum 5 rows
 
 	p.hrTable = table.New(
@@ -354,7 +356,7 @@ func (p *OuraPage) updateChartHighlight() {
 func (p *OuraPage) View() string {
 	var b strings.Builder
 
-	contentWidth := max(p.width-docStyle.GetHorizontalFrameSize(), 40)
+	contentWidth := max(p.width-DocStyle.GetHorizontalFrameSize(), 40)
 
 	// Title style
 	titleStyle := lipgloss.NewStyle().

@@ -1,9 +1,11 @@
-package main
+package pages
 
 import (
 	"fmt"
 	"strings"
 	"time"
+
+	"stet.codes/tui/clients"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,7 +18,7 @@ const plantaPollInterval = 4 * time.Hour
 type plantaTickMsg time.Time
 
 type plantaDataLoadedMsg struct {
-	tasks []PlantTask
+	tasks []clients.PlantTask
 }
 
 type plantaDataFailedMsg struct {
@@ -25,7 +27,7 @@ type plantaDataFailedMsg struct {
 
 type plantaCompleteSuccessMsg struct {
 	plantID    string
-	actionType ActionType
+	actionType clients.ActionType
 }
 
 type plantaCompleteFailedMsg struct {
@@ -61,8 +63,8 @@ var plantaKeys = plantaKeyMap{
 
 // PlantaPage displays plant care tasks from Planta.
 type PlantaPage struct {
-	client     *PlantaClient
-	tasks      []PlantTask
+	client     *clients.PlantaClient
+	tasks      []clients.PlantTask
 	cursor     int
 	pollCount  int
 	lastPoll   time.Time
@@ -75,7 +77,7 @@ type PlantaPage struct {
 }
 
 // NewPlantaPage creates and initializes the Planta page.
-func NewPlantaPage(client *PlantaClient) *PlantaPage {
+func NewPlantaPage(client *clients.PlantaClient) *PlantaPage {
 	needsAuth := !client.Auth().HasCredentials()
 	return &PlantaPage{
 		client:    client,
@@ -88,10 +90,10 @@ func (p *PlantaPage) ID() PageID {
 	return PlantaPageID
 }
 
-func (p *PlantaPage) Title() title {
-	return title{
-		text:  "Planta",
-		color: lipgloss.Color("#22C55E"), // Green for plants
+func (p *PlantaPage) Title() Title {
+	return Title{
+		Text:  "Planta",
+		Color: lipgloss.Color("#22C55E"), // Green for plants
 	}
 }
 
@@ -140,7 +142,7 @@ func (p *PlantaPage) fetchDataCmd() tea.Cmd {
 }
 
 // completeTaskCmd returns a command that completes a task.
-func (p *PlantaPage) completeTaskCmd(task PlantTask) tea.Cmd {
+func (p *PlantaPage) completeTaskCmd(task clients.PlantTask) tea.Cmd {
 	return func() tea.Msg {
 		err := p.client.CompleteAction(task.PlantID, task.ActionType)
 		if err != nil {
@@ -304,17 +306,17 @@ func (p *PlantaPage) View() string {
 			// Icon for action type
 			var icon string
 			switch task.ActionType {
-			case ActionWatering:
+			case clients.ActionWatering:
 				icon = "W"
-			case ActionFertilizing:
+			case clients.ActionFertilizing:
 				icon = "F"
-			case ActionMisting:
+			case clients.ActionMisting:
 				icon = "M"
-			case ActionCleaning:
+			case clients.ActionCleaning:
 				icon = "C"
-			case ActionRepotting:
+			case clients.ActionRepotting:
 				icon = "R"
-			case ActionProgressUpdate:
+			case clients.ActionProgressUpdate:
 				icon = "P"
 			}
 

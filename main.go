@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"stet.codes/tui/clients"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joho/godotenv"
 	"github.com/pressly/goose/v3"
@@ -61,13 +63,13 @@ func main() {
 	}
 
 	// Initialize Oura client with credentials from environment
-	ouraClient := NewOuraClient(
+	ouraClient := clients.NewOuraClient(
 		os.Getenv("OURA_CLIENT_ID"),
 		os.Getenv("OURA_CLIENT_SECRET"),
 	)
 
 	// Initialize Planta client with app code from environment
-	plantaClient := NewPlantaClient(os.Getenv("PLANTA_APP_CODE"))
+	plantaClient := clients.NewPlantaClient(os.Getenv("PLANTA_APP_CODE"))
 
 	// Alt-screen makes this a true full-window TUI (no scrollback spam).
 	p := tea.NewProgram(NewAppModel(db, ouraClient, plantaClient), tea.WithAltScreen())
