@@ -205,7 +205,15 @@ func loadJournalHistoryCmd(db *sql.DB) tea.Cmd {
 			if err := rows.Scan(&e.id, &dateStr, &e.content); err != nil {
 				return journalHistoryLoadFailedMsg{err: err}
 			}
-			e.entryDate, _ = time.Parse("2006-01-02", dateStr)
+			var parseErr error
+			e.entryDate, parseErr = time.Parse(time.RFC3339, dateStr)
+			if parseErr != nil {
+				// Fallback to date-only format
+				e.entryDate, parseErr = time.Parse("2006-01-02", dateStr)
+				if parseErr != nil {
+					return journalHistoryLoadFailedMsg{err: fmt.Errorf("parse date %q: %w", dateStr, parseErr)}
+				}
+			}
 			entries = append(entries, e)
 		}
 		if err := rows.Err(); err != nil {
@@ -466,7 +474,7 @@ type HistoryPage struct {
 	journalEntries  []JournalEntry
 	thisYearEntry   string
 	lastYearEntry   string
-	threeYearsEntry string
+	twoYearsEntry string
 	viewport        viewport.Model
 }
 
@@ -787,11 +795,11 @@ func (p *HistoryPage) updateComparisonBoxes() {
 	// Clear existing
 	p.thisYearEntry = ""
 	p.lastYearEntry = ""
-	p.threeYearsEntry = ""
+	p.twoYearsEntry = ""
 
 	thisYear := selectedDate.Year()
 	lastYear := thisYear - 1
-	threeYearsAgo := thisYear - 3
+	twoYearsAgo := thisYear - 2
 
 	month := selectedDate.Month()
 	day := selectedDate.Day()
@@ -803,8 +811,8 @@ func (p *HistoryPage) updateComparisonBoxes() {
 				p.thisYearEntry = entry.content
 			case lastYear:
 				p.lastYearEntry = entry.content
-			case threeYearsAgo:
-				p.threeYearsEntry = entry.content
+			case twoYearsAgo:
+				p.twoYearsEntry = entry.content
 			}
 		}
 	}
@@ -842,7 +850,7 @@ func (p *HistoryPage) renderComparisonBoxes() string {
 	}{
 		{fmt.Sprintf("This Year (%d)", thisYear), p.thisYearEntry},
 		{fmt.Sprintf("Last Year (%d)", thisYear-1), p.lastYearEntry},
-		{fmt.Sprintf("3 Years Ago (%d)", thisYear-3), p.threeYearsEntry},
+		{fmt.Sprintf("2 Years Ago (%d)", thisYear-2), p.twoYearsEntry},
 	}
 
 	var renderedBoxes []string
