@@ -62,15 +62,16 @@ type AppModel struct {
 // NewAppModel creates and initializes the application model with all pages.
 func NewAppModel(db *sql.DB, ouraClient *clients.OuraClient, plantaClient *clients.PlantaClient) AppModel {
 	allPages := []pages.Page{
-		pages.NewTodayPage(db),
-		pages.NewJournalPage(db),
 		pages.NewOuraPage(ouraClient),
 		pages.NewPlantaPage(plantaClient),
+		pages.NewTodayPage(db),
+		pages.NewJournalPage(db),
 		pages.NewHistoryPage(db),
 		pages.NewTaskCfgPage(db),
 	}
 
 	pag := paginator.New()
+	pag.Page = 2
 	pag.Type = paginator.Dots
 	pag.ActiveDot = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "235", Dark: "252"}).Render("•")
 	pag.InactiveDot = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "250", Dark: "238"}).Render("•")
