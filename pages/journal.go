@@ -136,6 +136,10 @@ func (p *JournalPage) CapturesNavigation() bool {
 	return p.mode != journalModeView
 }
 
+func (p *JournalPage) CapturesGlobalKeys() bool {
+	return p.mode == journalModeVimInsert
+}
+
 func (p *JournalPage) KeyMap() []key.Binding {
 	switch p.mode {
 	case journalModeView:

@@ -1044,3 +1044,7 @@ func (p *HistoryPage) KeyMap() []key.Binding {
 func (p *HistoryPage) CapturesNavigation() bool {
 	return p.mode == historyModeJournalPager
 }
+
+func (p *HistoryPage) CapturesGlobalKeys() bool {
+	return false // Allow global keys in all modes
+}

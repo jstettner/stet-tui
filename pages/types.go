@@ -33,10 +33,12 @@ type Title struct {
 	Color lipgloss.Color
 }
 
-// NavigationCapturer is an optional interface for pages that need to capture
-// navigation keys (left/right arrows) in certain modes (e.g., text input).
+// NavigationCapturer is an optional interface for pages that need to suppress
+// navigation keys (left/right arrows) or global key bindings (quit, help)
+// in certain modes (e.g., text input).
 type NavigationCapturer interface {
 	CapturesNavigation() bool
+	CapturesGlobalKeys() bool
 }
 
 // Page is the interface that all pages must implement.

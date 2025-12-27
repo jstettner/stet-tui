@@ -401,6 +401,10 @@ func (p *TaskCfgPage) CapturesNavigation() bool {
 	return p.mode != taskCfgModeList
 }
 
+func (p *TaskCfgPage) CapturesGlobalKeys() bool {
+	return false // Allow global keys in all modes
+}
+
 func (p *TaskCfgPage) Title() Title {
 	return Title{
 		Text:  "Configure",

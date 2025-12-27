@@ -267,13 +267,27 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, globalKeys.Quit):
+		// Check if active page captures global keys (e.g., insert mode)
+		capturesGlobal := false
+		if nc, ok := m.activePage().(pages.NavigationCapturer); ok {
+			capturesGlobal = nc.CapturesGlobalKeys()
+		}
+
+		// Always allow ctrl+c to quit (emergency exit)
+		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
-		case key.Matches(msg, globalKeys.Help):
-			m.help.ShowAll = !m.help.ShowAll
-			m.updatePageSizes() // Recalculate since help height changed
-			return m, nil
+		}
+
+		// Apply other global key bindings unless page captures them
+		if !capturesGlobal {
+			switch {
+			case key.Matches(msg, globalKeys.Quit):
+				return m, tea.Quit
+			case key.Matches(msg, globalKeys.Help):
+				m.help.ShowAll = !m.help.ShowAll
+				m.updatePageSizes() // Recalculate since help height changed
+				return m, nil
+			}
 		}
 	}
 
